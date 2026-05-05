@@ -1,0 +1,10 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="deps/HugoUtils/HugoUtils.vcxproj" Id="351bb40b-1e2f-42b9-9145-d4079e5efc93" />
+  <Project Path="HugoDbg.vcxproj" Id="a523d962-bbd5-4e39-884c-eb9a1788e8c9">
+    <BuildDependency Project="deps/HugoUtils/HugoUtils.vcxproj" />
+  </Project>
+</Solution>
