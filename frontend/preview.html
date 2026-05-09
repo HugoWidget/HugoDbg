@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HugoDbg - 浏览器预览</title>
+</head>
+<body>
+
+  <!-- 按依赖顺序加载组件 -->
+  <script src="divWindow.js"></script>
+  <script src="divDialog.js"></script>
+  <script src="vKeyboard.js"></script>
+  <script src="miniConsole.js"></script>
+
+  <script>
+    // ========== 模拟 Electron 依赖的功能 ==========
+    // 解锁锁屏（浏览器中仅提示）
+    window.unlockScreen = function() {
+      DivDialog.alert('解锁锁屏功能仅在 Electron 环境中可用。', { title: '提示', width: 280 });
+    };
+
+    // 隐藏信息（浏览器中仅提示）
+    window.hideInfo = function() {
+      // 尝试模拟查找并移除（通常页面上没有这些元素）
+      let found = false;
+      document.querySelectorAll('span').forEach(e => {
+        if (e.textContent.includes('设备ID') || e.textContent.includes('学校代码')) {
+          e.remove();
+          found = true;
+        }
+      });
+      DivDialog.alert(found ? '已隐藏找到的设备信息。' : '未找到设备ID或学校代码。', { title: '隐藏信息', width: 250 });
+    };
+
+    // 锁屏背景修改（浏览器中仅提示）
+    window.bgTool = function() {
+      DivDialog.alert('锁屏背景修改需要 Electron 环境，无法在浏览器中操作。', { title: '提示', width: 300 });
+    };
+
+    // 版本信息（显示模拟版本）
+    window.showVersion = function() {
+      const html = `<pre style="margin:0;font-family:Consolas;font-size:14px;">
+<b>核心组件:</b><br>
+  Electron: 22.0.0（模拟）<br>
+  ├─ Chromium: 108.0.5359.62<br>
+  ├─ Node.js: 16.17.1<br>
+  └─ V8: 10.8.168.6<br><br>
+<b>其他模块 (ABI 108):</b><br>
+  └─ 若干模块仅在 Electron 环境下显示
+</pre>`;
+      new DivWindow({ title: '详细版本信息', content: html, width: 280, height: 300 });
+    };
+
+    // ========== 虚拟键盘 ==========
+    let vkInstance = null;
+    window.toggleVirtualKeyboard = function() {
+      if (!vkInstance) {
+        try {
+          vkInstance = new VirtualKeyboard({ 
+            inputSelector: 'input, textarea', 
+            autoEnable: false 
+          });
+        } catch (e) {
+          DivDialog.alert('虚拟键盘加载失败。', { title: '错误' });
+          console.error(e);
+          return;
+        }
+      }
+      if (vkInstance.state.isVisible) {
+        vkInstance.close();
+      } else {
+        vkInstance.open();
+      }
+    };
+
+    // ========== JS 控制台 ==========
+    window.openMiniConsole = function() {
+      try {
+        new MiniConsole();
+      } catch (e) {
+        DivDialog.alert('JS 控制台加载失败。', { title: '错误' });
+        console.error(e);
+      }
+    };
+
+    // ========== 主菜单 HTML 内容（对齐 main.js 中的样式） ==========
+    const htmlContent = `
+<style>
+:root{--bg:rgb(219,238,255);--btn:rgb(8,209,82);--btn-hover:rgb(6,180,68)}
+*{box-sizing:border-box;margin:0;padding:0}
+.main{width:100%;height:100%;display:flex;flex-direction:column;padding:15px;background:var(--bg);font-family:-apple-system}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:10px}
+.grid button{padding:4px;font-size:13px;color:#fff;background:var(--btn);border:none;border-radius:2px;cursor:pointer;transition:.15s}
+.grid button:hover{background:var(--btn-hover)}
+#version{position:absolute;bottom:4px;right:12px;font-size:10px;color:#333;cursor:pointer}
+#version:hover{color:#000}
+</style>
+<div class="main">
+  <div class="grid">
+    <button onclick="location.reload()">刷新页面</button>
+    <button onclick="unlockScreen()">解锁锁屏</button>
+    <button onclick="hideInfo()">隐藏信息</button>
+    <button onclick="bgTool()">锁屏背景修改</button>
+    <button onclick="toggleVirtualKeyboard()">虚拟键盘</button>
+    <button onclick="openMiniConsole()">JS控制台</button>
+  </div>
+  <div id="version" onclick="showVersion()">HugoDbg v1.0.0 (预览)</div>
+</div>
+`;
+
+    // ========== 创建主窗口 ==========
+    let mainWindowInstance = null;
+    function createMain() {
+      if (mainWindowInstance) {
+        // 如果窗口已存在，尝试聚焦（DivWindow 无 focus 方法，可忽略或模拟）
+        return;
+      }
+      mainWindowInstance = new DivWindow({
+        title: '主菜单',
+        width: 320,
+        height: 180,
+        content: htmlContent,
+        x: 100,
+        y: 100,
+        onClose: function() { mainWindowInstance = null; }
+      });
+    }
+
+    // 页面加载完成后自动打开主菜单
+    createMain();
+
+    // ========== 可选：模拟悬浮按钮 ==========
+    // 在浏览器中全屏按钮通常不会显示，但可以添加一个固定的触发器
+    const openBtn = document.createElement('div');
+    openBtn.id = 'open_btn';
+    Object.assign(openBtn.style, {
+      position: 'fixed',
+      top: '4px',
+      left: '4px',
+      width: '50px',
+      height: '50px',
+      cursor: 'pointer',
+      opacity: 0.7,
+      zIndex: 9999,
+      backgroundColor: 'rgba(0,0,0,0.3)',
+      borderRadius: '50%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: '#fff',
+      fontSize: '20px',
+      border: 'none'
+    });
+    openBtn.textContent = '☰';
+    openBtn.addEventListener('click', createMain);
+    document.body.appendChild(openBtn);
+
+    // 如果主窗口关闭，可以通过悬浮按钮再次打开
+    // 不需要双击/三击等触发，直接点击悬浮按钮即可
+  </script>
+</body>
+</html>
