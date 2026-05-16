@@ -22,6 +22,7 @@
 #include "WinUtils/WinUtils.h"
 #include "WinUtils/CmdParser.h"
 #include "Strings.h"
+using namespace std;
 
 namespace fs = std::filesystem;
 using namespace WinUtils;
@@ -37,8 +38,8 @@ fs::path getHomeDirectory() {
 	return fs::path(home);
 }
 
-void handleLockFileParam(const std::wstring& param) {
-	fs::path lockFilePath = getHomeDirectory() / "unlock.bin";
+void handleLockFileParam(const std::wstring& param, wstring_view dir) {
+	fs::path lockFilePath = dir.empty() ? (getHomeDirectory() / "unlock.bin") : (fs::path(dir) / "unlock.bin");
 
 	try {
 		if (param == L"create") {
@@ -126,25 +127,25 @@ static bool wait_for_debug_port(const char* host, int port, int timeout_seconds)
 static bool execute_script(CDPClient* client, const char* script_js, const char* operation_name) {
 	char result[4096]{};
 	if (client->evaluate(script_js, result, sizeof(result)) == 0) {
-		printf(Strings::OP_SUCCESS.data(), operation_name);
+		printf(Strings::OpSucceeded.data(), operation_name);
 		std::cout << result << std::endl;
 		return true;
 	}
-	printf(Strings::OP_FAIL.data(), operation_name);
+	printf(Strings::OpFailed.data(), operation_name);
 	return false;
 }
 
 // Loader 模式
 static int run_loader_mode(CDPClient* client) {
 	int success_count = 0;
-	printf(Strings::MODE_RUNNING.data(), Strings::MODE_LOADER_NAME.data());
+	printf(Strings::RunningMode.data(), Strings::LoaderName.data());
 
-	if (execute_script(client, loader_js, Strings::MODE_LOADER_NAME.data())) {
+	if (execute_script(client, loader_js, Strings::LoaderName.data())) {
 		++success_count;
 		std::this_thread::sleep_for(20ms);
 
 		size_t num_commands = sizeof(bundle_js) / sizeof(bundle_js[0]);
-		printf(Strings::WAITING.data());
+		printf(Strings::Waiting.data());
 		char description_buffer[100];
 
 		for (size_t i = 0; i < num_commands; ++i) {
@@ -181,64 +182,64 @@ struct DebuggerSession {
 };
 
 // 主逻辑
-static int main_process() {
-	printf(Strings::DAEMON_START.data());
+static int main_process(bool check) {
+	printf(Strings::MainStart.data());
 	int consecutive_detections = 0;
-	const int required_detections = 3;
+	const int required_detections = check * 3;
 	DWORD target_pid = 0;
 
 	while (true) {
 		target_pid = find_process_by_name("SeewoServiceAssistant.exe", "SeewoCore.exe");
 		if (target_pid != 0) {
 			++consecutive_detections;
-			printf(Strings::DAEMON_DETECTED.data(), target_pid, consecutive_detections, required_detections);
+			printf(Strings::MainDetected.data(), target_pid, consecutive_detections, required_detections);
 			if (consecutive_detections >= required_detections) {
-				printf(Strings::DAEMON_INJECTING.data());
+				printf(Strings::MainInjecting.data());
 				break;
 			}
 		}
 		else {
 			if (consecutive_detections > 0) {
-				printf(Strings::DAEMON_LOST.data());
+				printf(Strings::MainLost.data());
 				consecutive_detections = 0;
 			}
 		}
 		std::this_thread::sleep_for(2s);
 	}
 
-	std::this_thread::sleep_for(3s);
+	std::this_thread::sleep_for(1.5s);
 
 	HttpClientGuard http_guard;
 
-	printf(Strings::INJECT_START.data());
+	printf(Strings::InjectStart.data());
 
 	try {
 		DebuggerSession debug_session(target_pid);
 		if (!wait_for_debug_port("127.0.0.1", 9229, 5)) {
-			printf(Strings::PIPE_TIMEOUT.data());
+			printf(Strings::PipeTimeout.data());
 			return 1;
 		}
 
 		auto client = std::make_unique<CDPClient>();
 		if (client->connectTarget("127.0.0.1", 9229, "node") != 0) {
-			printf(Strings::PIPE_FAIL.data());
+			printf(Strings::PipeFailed.data());
 			return 1;
 		}
 
 		if (client->enableRuntime() != 0) {
-			printf(Strings::RUNTIME_FAIL.data());
+			printf(Strings::RuntimeFailed.data());
 			return 1;
 		}
 
 		debug_session.setClient(client.release());
 
 		int success_count = run_loader_mode(debug_session.client);
-		printf(Strings::DAEMON_DONE.data(), success_count > 0 ? Strings::SUCCESS.data() : Strings::FAIL.data());
+		printf(Strings::MainDone.data(), success_count > 0 ? Strings::Succeeded.data() : Strings::Failed.data());
 
 		return (success_count > 0) ? 0 : 1;
 	}
 	catch (const std::exception& e) {
-		printf(Strings::INJECT_FAIL.data(), e.what());
+		printf(Strings::InjectFailed.data(), e.what());
 		return 1;
 	}
 }
@@ -246,10 +247,14 @@ static int main_process() {
 int main(int argc, char* argv[]) {
 	CmdParser parser;
 	parser.parse(ExtractArguments(GetCommandLine()));
+	bool check = !parser.hasCommand(L"nocheck");
 	if (auto param = parser.getParam(L"lockfile", 0)) {
-		handleLockFileParam(*param);
+		auto dir = parser.getParam(L"dir", 0);
+		wstring lockDir = fs::path("C:\\Users") / GetCurrentUserName();
+		if (dir)lockDir = *dir;
+		handleLockFileParam(*param, lockDir);
 	}
-	int result = main_process();
+	int result = main_process(check);
 	printf("\n执行结束，返回码: %d\n", result);
 	return result;
 }

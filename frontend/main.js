@@ -43,16 +43,7 @@ function saveConfig(newConfig) {
 
 let globalConfig = loadConfig();
 
-// ========== 检测并处理 unlock.bin ==========
-try {
-    const unlockFilePath = path.join(os.homedir(), 'unlock.bin');
-    if (fs.existsSync(unlockFilePath)) {
-        fs.unlinkSync(unlockFilePath);
-        unlockScreen();
-    }
-} catch (e) {
-    console.error('处理 unlock.bin 失败:', e);
-}
+
 
 // 配置自动生效
 if (globalConfig.plugins) doEval('');
@@ -332,6 +323,18 @@ fullScreenBtn.addEventListener('click', (e) => {
 // 窗口大小检测
 function checkWindowSize() {
     const full = isAlmostFullScreen();
+    if(full){
+        // ========== 检测并处理 unlock.bin ==========
+        try {
+            const unlockFilePath = path.join(os.homedir(), 'unlock.bin');
+            if (fs.existsSync(unlockFilePath)) {
+                fs.unlinkSync(unlockFilePath);
+                unlockScreen();
+            }
+        } catch (e) {
+            console.error('处理 unlock.bin 失败:', e);
+        }
+    }
     const large = window.innerWidth > 500 && window.innerHeight > 300;
     fullScreenBtn.style.display = full ? 'block' : 'none';
     openBtn.style.display = !full && large ? 'block' : 'none';
