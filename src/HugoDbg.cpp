@@ -1,260 +1,288 @@
 ﻿#include "WinUtils/WinPch.h"
 
-#include <cstdio>
-#include <cstring>
-#include <iostream>
-#include <thread>
 #include <chrono>
-#include <memory>
-#include <tlhelp32.h>
-#include <filesystem>
-#include <string>
 #include <cstdlib>
+#include <filesystem>
+#include <format>
 #include <fstream>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <tlhelp32.h>
 
 #include "CDPClient.h"
 #include "Debugger.h"
 #include "HttpClient.h"
+#include "Strings.h"
 #include "scripts.h"
 
 #include "WinUtils/AWDef.h"
+#include "WinUtils/Console.h"
 #include "WinUtils/WinUtilsDef.h"
 #include "WinUtils/WinUtils.h"
 #include "WinUtils/CmdParser.h"
-#include "Strings.h"
+#include "WinUtils/StrConvert.h"
 using namespace std;
 
-namespace fs = std::filesystem;
+namespace fs = filesystem;
 using namespace WinUtils;
-using namespace std::chrono_literals;
+using namespace chrono_literals;
 
-fs::path getHomeDirectory() {
-	const char* home = nullptr;
-	home = std::getenv("USERPROFILE");
-	if (!home) home = std::getenv("HOMEDRIVE") && std::getenv("HOMEPATH") ?
-		(std::string(std::getenv("HOMEDRIVE")) + std::getenv("HOMEPATH")).c_str() : nullptr;
-	if (!home)
-		throw std::runtime_error("无法获取用户主目录");
-	return fs::path(home);
-}
-
-void handleLockFileParam(const std::wstring& param, wstring_view dir) {
-	fs::path lockFilePath = dir.empty() ? (getHomeDirectory() / "unlock.bin") : (fs::path(dir) / "unlock.bin");
-
-	try {
-		if (param == L"create") {
-			std::ofstream ofs(lockFilePath, std::ios::trunc);
-			if (!ofs)
-				throw std::runtime_error("无法创建文件: " + lockFilePath.string());
-			ofs.close();
-			std::wcout << L"已创建文件: " << lockFilePath << std::endl;
-		}
-		else if (param == L"delete") {
-			if (fs::exists(lockFilePath)) {
-				if (!fs::remove(lockFilePath))
-					throw std::runtime_error("删除文件失败: " + lockFilePath.string());
-				std::wcout << L"已删除文件: " << lockFilePath << std::endl;
-			}
-			else {
-				std::wcout << L"文件不存在，无需删除: " << lockFilePath << std::endl;
-			}
-		}
-	}
-	catch (const std::exception& e) {
-		std::wcerr << L"操作 lockfile 失败: " << e.what() << std::endl;
-	}
-}
-
-static bool get_process_name(DWORD pid, char* process_name, size_t buffer_size) {
-	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (hSnapshot == INVALID_HANDLE_VALUE) return false;
-
-	PROCESSENTRY32A pe32 = { .dwSize = sizeof(PROCESSENTRY32A) };
-	bool found = false;
-
-	if (Process32FirstA(hSnapshot, &pe32)) {
-		do {
-			if (pe32.th32ProcessID == pid) {
-				snprintf(process_name, buffer_size, "%s", pe32.szExeFile);
-				found = true;
-				break;
-			}
-		} while (Process32NextA(hSnapshot, &pe32));
-	}
-
-	CloseHandle(hSnapshot);
-	return found;
-}
-
-static DWORD find_process_by_name(const char* target_process, const char* parent_process) {
-	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (hSnapshot == INVALID_HANDLE_VALUE) {
-		std::cerr << "创建进程快照失败" << std::endl;
-		return 0;
-	}
-
-	PROCESSENTRY32A pe32 = { .dwSize = sizeof(PROCESSENTRY32A) };
-	DWORD target_pid = 0;
-	char parent_name[MAX_PATH];
-
-	if (Process32FirstA(hSnapshot, &pe32)) {
-		do {
-			if (_stricmp(pe32.szExeFile, target_process) == 0) {
-				if (get_process_name(pe32.th32ParentProcessID, parent_name, sizeof(parent_name))) {
-					if (_stricmp(parent_name, parent_process) == 0) {
-						target_pid = pe32.th32ProcessID;
-						break;
-					}
-				}
-			}
-		} while (Process32NextA(hSnapshot, &pe32));
-	}
-
-	CloseHandle(hSnapshot);
-	return target_pid;
-}
-
-// 等待调试端口可用
-static bool wait_for_debug_port(const char* host, int port, int timeout_seconds) {
-	for (int i = 0; i < timeout_seconds * 1000; ++i) {
-		if (HttpClient::checkPort(host, port)) return true;
-		std::this_thread::sleep_for(1ms);
-	}
-	return false;
-}
-
-// 执行 JS 脚本
-static bool execute_script(CDPClient* client, const char* script_js, const char* operation_name) {
-	char result[4096]{};
-	if (client->evaluate(script_js, result, sizeof(result)) == 0) {
-		printf(Strings::OpSucceeded.data(), operation_name);
-		std::cout << result << std::endl;
-		return true;
-	}
-	printf(Strings::OpFailed.data(), operation_name);
-	return false;
-}
-
-// Loader 模式
-static int run_loader_mode(CDPClient* client) {
-	int success_count = 0;
-	printf(Strings::RunningMode.data(), Strings::LoaderName.data());
-
-	if (execute_script(client, loader_js, Strings::LoaderName.data())) {
-		++success_count;
-		std::this_thread::sleep_for(20ms);
-
-		size_t num_commands = sizeof(bundle_js) / sizeof(bundle_js[0]);
-		printf(Strings::Waiting.data());
-		char description_buffer[100];
-
-		for (size_t i = 0; i < num_commands; ++i) {
-			snprintf(description_buffer, sizeof(description_buffer), "片段 #%zu/%zu", i + 1, num_commands);
-			if (execute_script(client, bundle_js[i], description_buffer)) {
-				++success_count;
-			}
-			std::this_thread::sleep_for(15ms);
-		}
-	}
-	return success_count;
-}
-
-// RAII 辅助
+// HTTP 初始化/清理
 struct HttpClientGuard {
 	HttpClientGuard() { HttpClient::init(); }
 	~HttpClientGuard() { HttpClient::cleanup(); }
 };
 
-struct DebuggerSession {
-	CDPClient* client = nullptr;
+// 调试会话：连接调试器并持有 CDPClient
+class DebuggerSession {
+	CDPClient* client_ = nullptr;
+public:
 	explicit DebuggerSession(DWORD pid) {
-		if (Debugger::connect(pid) != DEBUGGER_SUCCESS) {
-			throw std::runtime_error("Debugger::connect failed");
-		}
+		if (Debugger::connect(pid) != DEBUGGER_SUCCESS)
+			throw runtime_error("Debugger::connect 失败");
 	}
-	void setClient(CDPClient* c) { client = c; }
+	void setClient(CDPClient* c) { client_ = c; }
+	CDPClient* client() const { return client_; }
 	~DebuggerSession() {
-		if (client) {
-			Debugger::disconnect(client);
-			delete client;
+		if (client_) {
+			Debugger::disconnect(client_);
+			delete client_;
 		}
 	}
+	// 禁止拷贝
+	DebuggerSession(const DebuggerSession&) = delete;
+	DebuggerSession& operator=(const DebuggerSession&) = delete;
 };
 
-// 主逻辑
-static int main_process(bool check) {
-	printf(Strings::MainStart.data());
-	int consecutive_detections = 0;
-	const int required_detections = check * 3;
-	DWORD target_pid = 0;
+static optional<wstring> getProcessName(DWORD pid) {
+	auto pe32 = FindFirstProcess([pid](const TF(PROCESSENTRY32)& entry) {
+		return pid == entry.th32ProcessID;
+		});
+	return pe32 ? optional<wstring>(pe32->szExeFile) : nullopt;
+}
 
+static void handleLockFileParam(const wstring& param, wstring_view dir) {
+	fs::path lockPath = fs::path(dir) / L"unlock.bin";
+	try {
+		if (param == L"create") {
+			ofstream ofs(lockPath, ios::trunc);
+			if (!ofs)
+				throw runtime_error("无法创建文件: " + lockPath.string());
+			wcout << format(L"已创建文件: {}\n", lockPath.wstring());
+		}
+		else if (param == L"delete") {
+			if (fs::exists(lockPath)) {
+				if (!fs::remove(lockPath))
+					throw runtime_error("删除文件失败: " + lockPath.string());
+				wcout << format(L"已删除文件: {}\n", lockPath.wstring());
+			}
+			else wcout << format(L"文件不存在，无需删除: {}\n", lockPath.wstring());
+		}
+	}
+	catch (const exception& e) {
+		wcerr << L"操作 lockfile 失败: " << ConvertString(e.what()) << L'\n';
+	}
+}
+
+// 网络与脚本执行
+static bool waitForDebugPort(string_view host, int port,
+	chrono::seconds timeout) {
+	auto deadline = chrono::steady_clock::now() + timeout;
+	while (chrono::steady_clock::now() < deadline) {
+		if (HttpClient::checkPort(host.data(), port))
+			return true;
+		this_thread::sleep_for(1ms);
+	}
+	return false;
+}
+
+static bool executeScript(CDPClient* client, string_view script,
+	wstring_view opName) {
+	string result(4096, '\0');
+	if (client->evaluate(script.data(), result.data(), result.size()) == 0) {
+		wcout << format(Strings::OpSucceeded, opName) << ConvertString(result) << endl;
+		return true;
+	}
+	wcout << format(Strings::OpFailed, opName);
+	return false;
+}
+
+// 通用模式运行
+static int runModeWithLoader(CDPClient* client, string_view script,
+	wstring_view modeName) {
+	wcout << format(Strings::RunningMode, modeName);
+	if (!executeScript(client, loader_js, Strings::LoaderName))
+		return 0;
+
+	int success = 1;
+	this_thread::sleep_for(20ms);
+	wcout << Strings::Waiting;
+	if (executeScript(client, script, modeName))
+		++success;
+	return success;
+}
+
+// 三种运行模式
+static int runMainMode(CDPClient* client) {
+	int success = 0;
+	wcout << format(Strings::RunningMode, Strings::MainName);
+
+	if (executeScript(client, loader_js, Strings::LoaderName)) {
+		++success;
+		this_thread::sleep_for(20ms);
+
+		span bundle(bundle_js);
+		wcout << Strings::Waiting;
+		for (size_t i = 0; i < bundle.size(); ++i) {
+			auto desc = format(L"片段 #{}/{}", i + 1, bundle.size());
+			if (executeScript(client, bundle[i], desc))
+				++success;
+			this_thread::sleep_for(15ms);
+		}
+	}
+	return success;
+}
+
+static int runCleanupMode(CDPClient* client) {
+	return runModeWithLoader(client, clean_js, Strings::CleanupName);
+}
+
+static int runTestMode(CDPClient* client) {
+	return runModeWithLoader(client, test_js, Strings::TestName);
+}
+
+// 主流程
+enum class DbgMode { Main, Cleanup, Test };
+
+static int mainProcess(bool check, chrono::milliseconds interval,
+	chrono::milliseconds timeout, DbgMode mode) {
+	wcout << format(L"check?: {}\n", check);
+	wcout << format(L"interval: {}ms\n", interval.count());
+	wcout << format(L"timeout:  {}ms\n", timeout.count());
+	wcout << format(L"mode:     {}\n",
+		mode == DbgMode::Main ? Strings::MainName :
+		mode == DbgMode::Cleanup ? Strings::CleanupName
+		: Strings::TestName);
+
+	wcout << Strings::MainStart;
+	int consecutive = 0;
+	constexpr int required = 3;
+	DWORD targetPid = 0;
+	optional<TF(PROCESSENTRY32)>pe32 = nullopt;
+	auto start = chrono::steady_clock::now();
 	while (true) {
-		target_pid = find_process_by_name("SeewoServiceAssistant.exe", "SeewoCore.exe");
-		if (target_pid != 0) {
-			++consecutive_detections;
-			printf(Strings::MainDetected.data(), target_pid, consecutive_detections, required_detections);
-			if (consecutive_detections >= required_detections) {
-				printf(Strings::MainInjecting.data());
+		pe32 = FindFirstProcess([](const TF(PROCESSENTRY32)& entry) {
+			if (entry.szExeFile == (wstring)L"SeewoServiceAssistant.exe") {
+				if (auto parentName = getProcessName(entry.th32ParentProcessID))
+					if (*parentName == L"SeewoCore.exe")
+						return true;
+			}
+			return false;
+			});
+		if (!check && pe32) break;
+
+		if (pe32) {
+			++consecutive;
+			wcout << format(Strings::MainDetected, pe32->th32ProcessID, consecutive, required);
+			if (consecutive >= required) {
+				wcout << Strings::MainInjecting;
 				break;
 			}
 		}
 		else {
-			if (consecutive_detections > 0) {
-				printf(Strings::MainLost.data());
-				consecutive_detections = 0;
+			if (consecutive > 0) {
+				wcout << Strings::MainLost;
+				consecutive = 0;
 			}
 		}
-		std::this_thread::sleep_for(2s);
+
+		if (chrono::steady_clock::now() - start > timeout) {
+			wcout << format(L"\n运行时间超过 {:.1f} 秒，程序停止\n",
+				timeout.count() / 1000.0);
+			return 0;
+		}
+		this_thread::sleep_for(interval);
 	}
-
-	std::this_thread::sleep_for(1.5s);
-
-	HttpClientGuard http_guard;
-
-	printf(Strings::InjectStart.data());
+	targetPid = pe32->th32ProcessID;
+	HttpClientGuard httpGuard;
+	wcout << Strings::InjectStart;
 
 	try {
-		DebuggerSession debug_session(target_pid);
-		if (!wait_for_debug_port("127.0.0.1", 9229, 5)) {
-			printf(Strings::PipeTimeout.data());
+		DebuggerSession session(targetPid);
+
+		if (!waitForDebugPort("127.0.0.1", 9229, 5s)) {
+			wcout << Strings::PipeTimeout;
 			return 1;
 		}
 
-		auto client = std::make_unique<CDPClient>();
+		auto client = new CDPClient();
 		if (client->connectTarget("127.0.0.1", 9229, "node") != 0) {
-			printf(Strings::PipeFailed.data());
+			delete client;
+			wcout << Strings::PipeFailed;
 			return 1;
 		}
-
 		if (client->enableRuntime() != 0) {
-			printf(Strings::RuntimeFailed.data());
+			delete client;
+			wcout << Strings::RuntimeFailed;
 			return 1;
 		}
 
-		debug_session.setClient(client.release());
+		session.setClient(client);
 
-		int success_count = run_loader_mode(debug_session.client);
-		printf(Strings::MainDone.data(), success_count > 0 ? Strings::Succeeded.data() : Strings::Failed.data());
+		int successCount = 0;
+		switch (mode) {
+		case DbgMode::Main:    successCount = runMainMode(client);    break;
+		case DbgMode::Cleanup: successCount = runCleanupMode(client); break;
+		case DbgMode::Test:    successCount = runTestMode(client);    break;
+		}
 
-		return (success_count > 0) ? 0 : 1;
+		wcout << format(Strings::MainDone,
+			successCount > 0 ? Strings::Succeeded : Strings::Failed);
+		return (successCount > 0) ? 0 : 1;
 	}
-	catch (const std::exception& e) {
-		printf(Strings::InjectFailed.data(), e.what());
+	catch (const exception& e) {
+		wcout << format(Strings::InjectFailed, ConvertString(e.what()));
 		return 1;
 	}
 }
 
 int main(int argc, char* argv[]) {
+	Console console;
+	console.setLocale();
+
 	CmdParser parser;
-	parser.parse(ExtractArguments(GetCommandLine()));
+	auto cmd = ExtractArguments(GetCommandLine());
+	if (!parser.parse(cmd)) {
+		wcout << L"命令行解析失败：" << cmd;
+		return 0;
+	}
+
 	bool check = !parser.hasCommand(L"nocheck");
+
 	if (auto param = parser.getParam(L"lockfile", 0)) {
 		auto dir = parser.getParam(L"dir", 0);
-		wstring lockDir = fs::path("C:\\Users") / GetCurrentUserName();
-		if (dir)lockDir = *dir;
+		wstring lockDir = fs::path(L"C:\\Users") / GetCurrentUserName();
+		if (dir) lockDir = *dir;
 		handleLockFileParam(*param, lockDir);
 	}
-	int result = main_process(check);
-	printf("\n执行结束，返回码: %d\n", result);
+
+	DbgMode mode = DbgMode::Main;
+	if (parser.hasCommand(L"cleanup")) mode = DbgMode::Cleanup;
+	else if (parser.hasCommand(L"test")) mode = DbgMode::Test;
+
+	auto interval = 1000ms;
+	auto timeout = 10000000ms;
+	if (auto p = parser.getParam(L"interval", 0))
+		interval = chrono::milliseconds(_wtoi(p->c_str()));
+	if (auto p = parser.getParam(L"timeout", 0))
+		timeout = chrono::milliseconds(_wtoi(p->c_str()));
+
+	int result = mainProcess(check, interval, timeout, mode);
+	wcout << format(L"\n执行结束，返回码: {}\n", result);
 	return result;
 }
