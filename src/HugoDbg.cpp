@@ -65,24 +65,25 @@ static optional<wstring> getProcessName(DWORD pid) {
 		});
 	return pe32 ? optional<wstring>(pe32->szExeFile) : nullopt;
 }
-
 static void handleLockFileParam(const wstring& param, wstring_view dir) {
 	fs::path lockPath = fs::path(dir) / L"unlock.bin";
 	try {
-		if (param == L"create") {
-			ofstream ofs(lockPath, ios::trunc);
-			if (!ofs)
-				throw runtime_error("无法创建文件: " + lockPath.string());
-			wcout << format(L"已创建文件: {}\n", lockPath.wstring());
+		string content;
+		if (param == L"fso_assist") {
+			content = "FullScreenOperation:Assist";
 		}
-		else if (param == L"delete") {
-			if (fs::exists(lockPath)) {
-				if (!fs::remove(lockPath))
-					throw runtime_error("删除文件失败: " + lockPath.string());
-				wcout << format(L"已删除文件: {}\n", lockPath.wstring());
-			}
-			else wcout << format(L"文件不存在，无需删除: {}\n", lockPath.wstring());
+		else if (param == L"fso_direct") {
+			content = "FullScreenOperation:Direct";
 		}
+		else if (param == L"fso_disable") {
+			content = "FullScreenOperation:Disable";
+		}
+
+		ofstream ofs(lockPath, ios::trunc);
+		if (!ofs)
+			throw runtime_error("无法创建文件: " + lockPath.string());
+		ofs << content;
+		wcout << format(L"已写入内容到 {}: {}\n", lockPath.wstring(), ConvertString(content));
 	}
 	catch (const exception& e) {
 		wcerr << L"操作 lockfile 失败: " << ConvertString(e.what()) << L'\n';

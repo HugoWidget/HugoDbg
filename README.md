@@ -1,6 +1,6 @@
 # HugoDbg
 
-希沃前端调试工具，用于对希沃（Seewo）软件前端进行增强与功能补充，主要面向电教管理场景。
+希沃前端调试工具，用于对希沃管家前端进行增强与功能补充，主要面向电教管理场景。
 
 ## 项目介绍
 
@@ -20,12 +20,15 @@ HugoDbg 通过调试器注入希沃服务进程，利用 Chrome DevTools Protoco
 ## 编译运行
 
 1. 克隆仓库（注意包含子模块）：
+
    ```bash
    git clone https://github.com/HugoWidget/HugoDbg --recursive
    ```
-   
+
 2. 使用 Visual Studio 2022 打开解决方案 `HugoDbg.slnx`。
+
 3. 选择配置（Debug/Release）与平台（x64），生成解决方案。
+
 4. 运行生成的 `HugoDbg.exe`，可通过命令行参数控制行为（见下文）。
 
 ## 命令行参数
@@ -34,16 +37,17 @@ HugoDbg 通过调试器注入希沃服务进程，利用 Chrome DevTools Protoco
 HugoDbg.exe [选项]
 ```
 
-| 参数               | 说明                                                         |
-| ------------------ | ------------------------------------------------------------ |
-| `-nocheck`         | 跳过进程检测，只要目标进程出现即注入（默认会要求连续检测到目标进程 3 次后才注入）。 |
-| `-cleanup`         | 运行清理模式，注入移除脚本。                                 |
-| `-test`            | 运行测试模式，注入测试脚本。                                 |
-| `-interval <毫秒>` | 检测目标进程的轮询间隔（默认 1000 毫秒）。                   |
-| `-timeout <毫秒>`  | 最大等待时间，超时退出（默认 10,000,000 毫秒）。             |
-| `-lockfile create` | 在当前用户目录或指定目录下创建 `unlock.bin` 锁文件。         |
-| `-lockfile delete` | 删除对应的锁文件。                                           |
-| `-dir <路径>`      | 与 `-lockfile` 配合，指定锁文件的存放目录（默认为 `C:\Users\<当前用户>`）。 |
+| 参数                    | 说明                                                         |
+| ----------------------- | ------------------------------------------------------------ |
+| `-nocheck`              | 跳过进程检测，只要目标进程出现即注入（默认会要求连续检测到目标进程 3 次后才注入）。 |
+| `-cleanup`              | 运行清理模式，注入移除脚本。                                 |
+| `-test`                 | 运行测试模式，注入测试脚本。                                 |
+| `-interval <毫秒>`      | 检测目标进程的轮询间隔（默认 1000 毫秒）。                   |
+| `-timeout <毫秒>`       | 最大等待时间，超时退出（默认 10,000,000 毫秒）。             |
+| `-lockfile fso_assist`  | 在用户目录（或 `-dir` 指定目录）下创建/覆盖 `unlock.bin`，内容为 `FullScreenOperation:Assist`，前端不作解锁。 |
+| `-lockfile fso_direct`  | 创建/覆盖 `unlock.bin`，内容为 `FullScreenOperation:Direct`，前端解锁并将文件内容改为 `Assist`，即只解锁一次。 |
+| `-lockfile fso_disable` | 创建/覆盖 `unlock.bin`，内容为 `FullScreenOperation:Disable`，前端直接解锁，不修改文件，锁屏与屏保功能将完全不可用。 |
+| `-dir <路径>`           | 与 `-lockfile` 配合，指定锁文件的存放目录（默认为 `C:\Users\<当前用户>`）。 |
 
 若未指定模式，默认运行主模式。
 
@@ -52,25 +56,36 @@ HugoDbg.exe [选项]
 你可以在 [HugoSetup](https://github.com/HugoWidget/HugoSetup) 获取已配置版本
 
 * 常规运行（检测到目标稳定后注入主脚本）：
+
   ```bash
   HugoDbg.exe
   ```
 
-
 * 无需稳定性检测，立即注入：
+
   ```bash
   HugoDbg.exe -nocheck
   ```
 
 * 运行清理脚本：
+
   ```bash
   HugoDbg.exe -cleanup
   ```
 
 * 调整轮询间隔为 500 ms，总超时 60 秒：
+
   ```bash
   HugoDbg.exe -interval 500 -timeout 60000
   ```
+
+* 创建一个“直接解锁”锁文件（前端将在全屏时解锁并转换为 Assist 状态）：
+
+  ```bash
+  HugoDbg.exe -lockfile fso_direct
+  ```
+
+  
 
 ## 项目依赖
 

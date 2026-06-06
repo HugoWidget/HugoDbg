@@ -323,13 +323,18 @@ fullScreenBtn.addEventListener('click', (e) => {
 // 窗口大小检测
 function checkWindowSize() {
     const full = isAlmostFullScreen();
-    if(full){
+    if (full) {
         // ========== 检测并处理 unlock.bin ==========
         try {
             const unlockFilePath = path.join(os.homedir(), 'unlock.bin');
             if (fs.existsSync(unlockFilePath)) {
-                fs.unlinkSync(unlockFilePath);
-                unlockScreen();
+                const content = fs.readFileSync(unlockFilePath, 'utf-8').trim();
+                if (content === 'FullScreenOperation:Direct') {
+                    fs.writeFileSync(unlockFilePath, 'FullScreenOperation:Assist', 'utf-8');
+                    unlockScreen();
+                } else if (content === 'FullScreenOperation:Disable') {
+                    unlockScreen();
+                }
             }
         } catch (e) {
             console.error('处理 unlock.bin 失败:', e);
