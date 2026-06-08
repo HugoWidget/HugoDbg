@@ -26,11 +26,17 @@
 #include "WinUtils/WinUtils.h"
 #include "WinUtils/CmdParser.h"
 #include "WinUtils/StrConvert.h"
+#include "WinUtils/INI.h"
 using namespace std;
 
 namespace fs = filesystem;
 using namespace WinUtils;
 using namespace chrono_literals;
+
+// 配置文件固定名
+constexpr wchar_t CONFIG_FILE[] = L"hdconfig.ini";
+// 统一使用一个节名（前端可不关心）
+constexpr wchar_t CONFIG_SECTION[] = L"General";
 
 // HTTP 初始化/清理
 struct HttpClientGuard {
@@ -65,28 +71,63 @@ static optional<wstring> getProcessName(DWORD pid) {
 		});
 	return pe32 ? optional<wstring>(pe32->szExeFile) : nullopt;
 }
-static void handleLockFileParam(const wstring& param, wstring_view dir) {
-	fs::path lockPath = fs::path(dir) / L"unlock.bin";
+
+static void writeConfigValue(const fs::path& dir,
+	const std::wstring& key,
+	const std::wstring& value) {
+	fs::path cfgPath = dir / CONFIG_FILE;
 	try {
-		string content;
-		if (param == L"fso_assist") {
-			content = "FullScreenOperation:Assist";
-		}
-		else if (param == L"fso_direct") {
-			content = "FullScreenOperation:Direct";
-		}
-		else if (param == L"fso_disable") {
-			content = "FullScreenOperation:Disable";
+		WinUtils::INIFile ini(cfgPath);
+		WinUtils::INIStructure data;
+
+		// 读取已有配置（文件不存在时 data 为空）
+		if (fs::exists(cfgPath)) {
+			ini.read(data);
 		}
 
-		ofstream ofs(lockPath, ios::trunc);
-		if (!ofs)
-			throw runtime_error("无法创建文件: " + lockPath.string());
-		ofs << content;
-		wcout << format(L"已写入内容到 {}: {}\n", lockPath.wstring(), ConvertString(content));
+		// 设置目标键值
+		data[CONFIG_SECTION][key] = value;
+
+		// 写回文件
+		ini.write(data, false);
 	}
-	catch (const exception& e) {
-		wcerr << L"操作 lockfile 失败: " << ConvertString(e.what()) << L'\n';
+	catch (const std::exception& e) {
+		std::wcerr << L"写入配置失败: " << ConvertString(e.what()) << L'\n';
+	}
+}
+
+// 统一处理所有与配置文件相关的命令行参数
+static void handleConfigParams(CmdParser& parser) {
+	auto dir = parser.getParam(L"dir", 0);
+	fs::path cfgDir = fs::path(L"C:\\Users") / GetCurrentUserName();
+	if (dir) cfgDir = *dir;
+
+	// lockfile 相关（映射为 FullScreenOperation）
+	if (auto param = parser.getParam(L"lockfile", 0)) {
+		std::wstring value;
+		if (*param == L"fso_assist")      value = L"Assist";
+		else if (*param == L"fso_direct") value = L"Direct";
+		else if (*param == L"fso_disable") value = L"Disable";
+		else {
+			wcerr << L"无效的 lockfile 参数值\n";
+			return;
+		}
+		writeConfigValue(cfgDir, L"FullScreenOperation", value);
+		wcout << format(L"已设置 FullScreenOperation = {}\n", ConvertString(value));
+	}
+	else {// 默认值（如果用户未指定 lockfile 参数，则设置为 Assist）
+		writeConfigValue(cfgDir, L"FullScreenOperation", L"Assist");
+		wcout << L"已设置 FullScreenOperation = Assist\n";
+	}
+
+	// -noscreensaver
+	if (parser.hasCommand(L"noscreensaver")) {
+		writeConfigValue(cfgDir, L"ScreenSaver", L"false");
+		wcout << L"已设置 ScreenSaver = false\n";
+	}
+	else {
+		writeConfigValue(cfgDir, L"ScreenSaver", L"true");
+		wcout << L"已设置 ScreenSaver = true\n";
 	}
 }
 
@@ -264,13 +305,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	bool check = !parser.hasCommand(L"nocheck");
-
-	if (auto param = parser.getParam(L"lockfile", 0)) {
-		auto dir = parser.getParam(L"dir", 0);
-		wstring lockDir = fs::path(L"C:\\Users") / GetCurrentUserName();
-		if (dir) lockDir = *dir;
-		handleLockFileParam(*param, lockDir);
-	}
+	handleConfigParams(parser);
 
 	DbgMode mode = DbgMode::Main;
 	if (parser.hasCommand(L"cleanup")) mode = DbgMode::Cleanup;

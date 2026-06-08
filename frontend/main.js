@@ -10,9 +10,9 @@ function doEval(script) {
     ipcRenderer.send(channel, { apiKey, action: 'exec', data: script });
 }
 
-ipcRenderer.on(channel+'-reply', (event, data) => {
+ipcRenderer.on(channel + '-reply', (event, data) => {
     window.__ipc_ret = data;
-})
+});
 
 // 兼容获取require
 let r;
@@ -26,9 +26,12 @@ if (typeof require('electron').remote == 'undefined' && typeof require == 'funct
 const fs = r('fs');
 const path = r('path');
 const os = r('os');
-const configFilePath = path.join(os.homedir(), '.hugodbg.config');
+const configFilePath = path.join(os.homedir(), '.hugodbg.config');   // 用户配置
+const hdConfigPath = path.join(os.homedir(), 'hdconfig.ini');        // 外部控制配置
+let hdConfigRaw = null;
+let hdConfigCache = null;   // 缓存解析后的 ini 配置
 
-// 配置读写
+// ==================== 用户配置读写 ====================
 function loadConfig() {
     try {
         return JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
@@ -42,8 +45,6 @@ function saveConfig(newConfig) {
 }
 
 let globalConfig = loadConfig();
-
-
 
 // 配置自动生效
 if (globalConfig.plugins) doEval('');
@@ -68,28 +69,26 @@ if (globalConfig.autoHideInfo) {
 
 if (globalConfig.disableHelper) return;
 
-// 版本信息
+// ==================== 功能函数 ====================
 function showVersion() {
     if (typeof process === 'undefined' || !process.versions) {
         DivDialog.alert('环境不合法，无法获取版本信息', { title: '错误', width: 350 });
         return;
     }
     const v = process.versions;
-    const other = Object.entries(v).filter(([k]) => !['electron','chrome','node','v8','modules'].includes(k.toLowerCase()));
+    const other = Object.entries(v).filter(([k]) => !['electron', 'chrome', 'node', 'v8', 'modules'].includes(k.toLowerCase()));
     let html = `<pre style="margin:0;font-family:Consolas;font-size:14px;">`;
     html += `<b>核心组件:</b><br>  Electron: ${v.electron}<br>  ├─ Chromium: ${v.chrome}<br>  ├─ Node.js: ${v.node}<br>  └─ V8: ${v.v8}<br><br>`;
     html += `<b>其他模块 (ABI ${v.modules}):</b><br>`;
-    other.forEach(([n, v], i) => html += `  ${i===other.length-1?'└─':'├─'} ${n}: ${v}<br>`);
+    other.forEach(([n, v], i) => html += `  ${i === other.length - 1 ? '└─' : '├─'} ${n}: ${v}<br>`);
     html += `</pre>`;
     new DivWindow({ title: '详细版本信息', content: html, width: 280, height: 420 });
 }
 
-// 解锁锁屏
 function unlockScreen() {
     isSW ? require('electron').ipcRenderer.send('windowMessage', { eventName: 'stopScreenLock', data: !0 }) : DivDialog.alert('环境不合法', { width: 250 });
 }
 
-// 隐藏信息
 function hideInfo() {
     let text = '';
     document.querySelectorAll('span').forEach(e => {
@@ -102,13 +101,12 @@ function hideInfo() {
     DivDialog.alert(text || '未找到设备ID/学校代码', { width: 150 });
 }
 
-// 虚拟键盘
 function toggleVirtualKeyboard() {
     if (!vKeyboardInstance) {
         try {
-            vKeyboardInstance = new VirtualKeyboard({ 
-                inputSelector: 'input, textarea', 
-                autoEnable: false 
+            vKeyboardInstance = new VirtualKeyboard({
+                inputSelector: 'input, textarea',
+                autoEnable: false
             });
         } catch (e) {
             DivDialog.alert('失败了', { title: '错误' });
@@ -121,9 +119,7 @@ function toggleVirtualKeyboard() {
         vKeyboardInstance.close();
         document.removeEventListener('focusin', vKeyboardInstance._handleFocusIn);
     } else {
-        // 打开时绑定焦点监听，自动追踪输入框
         document.addEventListener('focusin', vKeyboardInstance._handleFocusIn);
-        // 如果当前已有聚焦的输入框，直接设置
         const activeEl = document.activeElement;
         if (activeEl && activeEl.matches('input, textarea')) {
             vKeyboardInstance.open(activeEl);
@@ -133,20 +129,40 @@ function toggleVirtualKeyboard() {
     }
 }
 
-// JS控制台
 function openMiniConsole() {
     try { new MiniConsole() } catch (e) { DivDialog.alert('失败了', { title: '错误' }); console.error(e); }
 }
 
-// 图片链接验证
+function showStatusInfo() {
+    const state = getWindowState();
+    const stateMap = {
+        small: '小窗模式',
+        main: '主界面',
+        lockscreen: '锁屏',
+        screensaver: '屏保'
+    };
+    const stateText = stateMap[state] || state;
+    let info = `当前窗口模式: ${stateText}`;
+
+    if (hdConfigCache && hdConfigCache.size > 0) {
+        info += '\n\n配置文件 (hdconfig.ini):';
+        hdConfigCache.forEach((value, key) => {
+            info += `\n  ${key} = ${value}`;
+        });
+    } else {
+        info += '\n\n配置文件未加载或无有效配置项。';
+    }
+
+    DivDialog.alert(info, { title: '当前状态与配置', width: 350 });
+}
+
 function isValidImageUrl(url) {
     if (typeof url !== 'string' || !url.trim()) return false;
     const protocol = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///');
-    const ext = ['.jpg','.jpeg','.png','.gif','.bmp','.webp','.svg'].some(e => url.toLowerCase().endsWith(e));
+    const ext = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'].some(e => url.toLowerCase().endsWith(e));
     return protocol && ext;
 }
 
-// 锁屏背景修改
 let bgToolLock = false;
 function bgTool() {
     if (bgToolLock) return;
@@ -184,7 +200,9 @@ function bgTool() {
     });
 
     const ipt = document.getElementById('bg-url');
-    const [pre, save, res] = [document.getElementById('preview'), document.getElementById('save'), document.getElementById('restore')];
+    const pre = document.getElementById('preview');
+    const save = document.getElementById('save');
+    const res = document.getElementById('restore');
 
     const restore = () => {
         globalConfig.backgroundImage = '';
@@ -219,17 +237,78 @@ function bgTool() {
     updateBtn();
 }
 
-// 控制指定按钮显示/隐藏
-function updateSpecialButtons() {
-    const isFull = isAlmostFullScreen();
-    const unlockBtn = document.querySelector('.grid button[onclick="unlockScreen()"]');
-    const hideInfoBtn = document.querySelector('.grid button[onclick="hideInfo()"]');
-    
-    if (unlockBtn) unlockBtn.style.display = isFull ? 'block' : 'none';
-    if (hideInfoBtn) hideInfoBtn.style.display = isFull ? 'block' : 'none';
+// ==================== 窗口状态枚举与判断 ====================
+const WindowState = {
+    SMALL: 'small',
+    MAIN: 'main',
+    LOCKSCREEN: 'lockscreen',
+    SCREENSAVER: 'screensaver'
+};
+
+function getWindowState() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w < 300 && h < 500) return WindowState.SMALL;
+    if (isAlmostFullScreen()) {
+        const bodyText = document.body.innerText || '';
+        if (bodyText.includes('屏保')) return WindowState.SCREENSAVER;
+        return WindowState.LOCKSCREEN;
+    }
+    return WindowState.MAIN;
 }
 
-// 主界面样式与结构（已移除对 DivWindow/Dialog 的样式覆盖）
+function isAlmostFullScreen() {
+    const w = window.screen.width;
+    const h = window.screen.height;
+    return window.innerWidth / w >= 0.95 && window.innerHeight / h >= 0.95;
+}
+
+// ==================== INI 解析 ====================
+function parseIniLike(content) {
+    const map = new Map();
+    const lines = content.split(/\r?\n/);
+    for (let line of lines) {
+        line = line.trim();
+        if (line === '' || line.startsWith(';') || line.startsWith('[')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.substring(0, eqIdx).trim();
+        const value = line.substring(eqIdx + 1).trim();
+        if (key) map.set(key, value);
+    }
+    return map;
+}
+
+function loadHdConfig() {
+    try {
+        if (fs.existsSync(hdConfigPath)) {
+            hdConfigRaw = fs.readFileSync(hdConfigPath, 'utf-8');
+            hdConfigCache = parseIniLike(hdConfigRaw);
+        } else {
+            hdConfigRaw = null;
+            hdConfigCache = null;
+        }
+    } catch (e) {
+        console.error('加载 hdconfig.ini 失败:', e);
+        hdConfigRaw = null;
+        hdConfigCache = null;
+    }
+}
+
+// ==================== 按钮状态更新 ====================
+function updateSpecialButtons(state) {
+    if (!state) state = getWindowState();
+
+    const btnUnlock = document.getElementById('btn_unlock');
+    const btnCloseSS = document.getElementById('btn_close_screensaver');
+    const btnHideInfo = document.getElementById('btn_hide_info');
+
+    if (btnUnlock) btnUnlock.style.display = (state === WindowState.LOCKSCREEN) ? 'block' : 'none';
+    if (btnCloseSS) btnCloseSS.style.display = (state === WindowState.SCREENSAVER) ? 'block' : 'none';
+    if (btnHideInfo) btnHideInfo.style.display = (state === WindowState.LOCKSCREEN || state === WindowState.SCREENSAVER) ? 'block' : 'none';
+}
+
+// ==================== 主界面 HTML ====================
 const htmlContent = `
 <style>
 :root{--bg:rgb(219,238,255);--btn:rgb(8,209,82);--btn-hover:rgb(6,180,68)}
@@ -243,47 +322,61 @@ const htmlContent = `
 </style>
 <div class="main">
 <div class="grid">
-<button onclick="location.reload()">刷新页面</button>
-<button onclick="unlockScreen()">解锁锁屏</button>
-<button onclick="hideInfo()">隐藏信息</button>
-<button onclick="bgTool()">锁屏背景修改</button>
-<button onclick="toggleVirtualKeyboard()">虚拟键盘</button>
-<button onclick="openMiniConsole()">JS控制台</button>
+<button id="btn_refresh">刷新页面</button>
+<button id="btn_unlock">解锁锁屏</button>
+<button id="btn_close_screensaver">关闭屏幕保护</button>
+<button id="btn_hide_info">隐藏信息</button>
+<button id="btn_bg_tool">修改锁屏背景</button>
+<button id="btn_virtual_keyboard">虚拟键盘</button>
+<button id="btn_mini_console">JS控制台</button>
+<button id="btn_show_status">状态配置</button>
 </div>
-<div id="version" onclick="showVersion()">HugoDbg v1.0.0</div>
+<div id="version">HugoDbg v1.0.0</div>
 </div>
 `;
 
-// 全局挂载方法
-window.unlockScreen = unlockScreen;
-window.hideInfo = hideInfo;
-window.bgTool = bgTool;
-window.toggleVirtualKeyboard = toggleVirtualKeyboard;
-window.openMiniConsole = openMiniConsole;
-window.showVersion = showVersion;
+// ==================== 事件绑定 ====================
+function bindMainEvents() {
+    const getBtn = (id) => document.getElementById(id);
+    const addClick = (id, handler) => {
+        const btn = getBtn(id);
+        if (btn) btn.addEventListener('click', handler);
+    };
+
+    addClick('btn_refresh', () => location.reload());
+    addClick('btn_unlock', unlockScreen);
+    addClick('btn_close_screensaver', () => window.close());
+    addClick('btn_hide_info', hideInfo);
+    addClick('btn_bg_tool', bgTool);
+    addClick('btn_virtual_keyboard', toggleVirtualKeyboard);
+    addClick('btn_mini_console', openMiniConsole);
+    addClick('btn_show_status', showStatusInfo);
+
+    const verEl = document.getElementById('version');
+    if (verEl) verEl.addEventListener('click', showVersion);
+}
 
 let mainWindowInstance = null;
-// 创建主窗口
 function createMain() {
     if (mainWindowInstance) {
         mainWindowInstance.focus?.();
         return;
     }
     mainWindowInstance = new DivWindow({
-        title: '主菜单', width: 320, height: 180, content: htmlContent,
-        x: 100, y: 100, onClose: () => mainWindowInstance = null
+        title: '主菜单',
+        width: 320,
+        height: 210,
+        content: htmlContent,
+        x: 100,
+        y: 100,
+        onClose: () => mainWindowInstance = null
     });
-    setTimeout(updateSpecialButtons, 50);
+    // 由于 DivWindow 的 content 同步插入 DOM，可直接绑定事件
+    bindMainEvents();
+    updateSpecialButtons();
 }
 
-// 全屏检测
-function isAlmostFullScreen() {
-    const w = window.screen.width;
-    const h = window.screen.height;
-    return window.innerWidth/w >= 0.95 && window.innerHeight/h >= 0.95;
-}
-
-// 悬浮按钮
+// ==================== 悬浮按钮 ====================
 const openBtn = document.createElement('div');
 openBtn.id = 'open_btn';
 Object.assign(openBtn.style, {
@@ -293,8 +386,8 @@ Object.assign(openBtn.style, {
 document.body.appendChild(openBtn);
 openBtn.addEventListener('click', createMain);
 
-// 全屏按钮
 const fullScreenBtn = document.createElement('div');
+fullScreenBtn.id = 'full_btn';
 fullScreenBtn.innerHTML = '×';
 Object.assign(fullScreenBtn.style, {
     position: 'fixed', top: '10px', right: '10px', width: '40px', height: '40px',
@@ -303,7 +396,6 @@ Object.assign(fullScreenBtn.style, {
 });
 document.body.appendChild(fullScreenBtn);
 
-// 双击/三击事件
 let clickCount = 0;
 let clickTimer = null;
 fullScreenBtn.addEventListener('click', (e) => {
@@ -311,41 +403,65 @@ fullScreenBtn.addEventListener('click', (e) => {
     clickCount++;
     clearTimeout(clickTimer);
     clickTimer = setTimeout(() => clickCount = 0, 300);
-
-    if (clickCount === 2) {
-        createMain();
-    } else if (clickCount === 3) {
+    if (clickCount === 2) createMain();
+    else if (clickCount === 3) {
         unlockScreen();
         clickCount = 0;
     }
 });
 
-// 窗口大小检测
+// ==================== 窗口变化处理 ====================
 function checkWindowSize() {
-    const full = isAlmostFullScreen();
-    if (full) {
-        // ========== 检测并处理 unlock.bin ==========
-        try {
-            const unlockFilePath = path.join(os.homedir(), 'unlock.bin');
-            if (fs.existsSync(unlockFilePath)) {
-                const content = fs.readFileSync(unlockFilePath, 'utf-8').trim();
-                if (content === 'FullScreenOperation:Direct') {
-                    fs.writeFileSync(unlockFilePath, 'FullScreenOperation:Assist', 'utf-8');
-                    unlockScreen();
-                } else if (content === 'FullScreenOperation:Disable') {
-                    unlockScreen();
+    const state = getWindowState();
+
+    // 悬浮按钮显隐
+    if (state === WindowState.SMALL) {
+        openBtn.style.display = 'none';
+        fullScreenBtn.style.display = 'none';
+    } else if (state === WindowState.MAIN) {
+        openBtn.style.display = 'block';
+        fullScreenBtn.style.display = 'none';
+    } else {
+        openBtn.style.display = 'none';
+        fullScreenBtn.style.display = 'block';
+    }
+
+    updateSpecialButtons(state);
+
+    // 更新配置缓存
+    loadHdConfig();
+
+    if (hdConfigCache) {
+        const fso = hdConfigCache.get('FullScreenOperation');
+        if (fso && (state === WindowState.LOCKSCREEN || state === WindowState.SCREENSAVER)) {
+            if (fso === 'Direct') {
+                // 使用缓存的原始内容进行替换
+                if (hdConfigRaw) {
+                    const newContent = hdConfigRaw.replace(
+                        /^FullScreenOperation\s*=\s*Direct$/m,
+                        'FullScreenOperation=Assist'
+                    );
+                    try {
+                        fs.writeFileSync(hdConfigPath, newContent, 'utf-8');
+                        loadHdConfig(); // 写回后立即刷新缓存
+                    } catch (e) {
+                        console.error('写入 hdconfig.ini 失败:', e);
+                    }
                 }
+                unlockScreen();
+            } else if (fso === 'Disable') {
+                unlockScreen();
             }
-        } catch (e) {
-            console.error('处理 unlock.bin 失败:', e);
+        }
+
+        if (hdConfigCache.get('ScreenSaver') === 'false' && state === WindowState.SCREENSAVER) {
+            window.close();
         }
     }
-    const large = window.innerWidth > 500 && window.innerHeight > 300;
-    fullScreenBtn.style.display = full ? 'block' : 'none';
-    openBtn.style.display = !full && large ? 'block' : 'none';
-    updateSpecialButtons();
 }
 
+// 初始化
+loadHdConfig(); 
 checkWindowSize();
 window.addEventListener('resize', checkWindowSize);
 window.addEventListener('fullscreenchange', checkWindowSize);
