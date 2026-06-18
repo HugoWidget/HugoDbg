@@ -26,10 +26,23 @@ if (typeof require('electron').remote == 'undefined' && typeof require == 'funct
 const fs = r('fs');
 const path = r('path');
 const os = r('os');
-const configFilePath = path.join(os.homedir(), '.hugodbg.config');   // 用户配置
-const hdConfigPath = path.join(os.homedir(), 'hdconfig.ini');        // 外部控制配置
+const configFilePath = path.join(os.homedir(), '.hugodbg.config');
+const hdConfigPath = path.join(os.homedir(), 'hdconfig.ini');
 let hdConfigRaw = null;
-let hdConfigCache = null;   // 缓存解析后的 ini 配置
+let hdConfigCache = null;
+
+// ==================== 日志写入 ====================
+const logFilePath = path.join(os.homedir(), 'HugoDbg.log');
+
+function writeLog(content) {
+    try {
+        const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19); // YYYY-MM-DD HH:MM:SS
+        const logLine = `[${timestamp}]${content}\n`;
+        fs.appendFileSync(logFilePath, logLine, 'utf-8');
+    } catch (e) {
+        console.error('写日志失败:', e);
+    }
+}
 
 // ==================== 用户配置读写 ====================
 function loadConfig() {
@@ -86,6 +99,7 @@ function showVersion() {
 }
 
 function unlockScreen() {
+    writeLog('解锁锁屏');
     isSW ? require('electron').ipcRenderer.send('windowMessage', { eventName: 'stopScreenLock', data: !0 }) : DivDialog.alert('环境不合法', { width: 250 });
 }
 
@@ -345,7 +359,11 @@ function bindMainEvents() {
 
     addClick('btn_refresh', () => location.reload());
     addClick('btn_unlock', unlockScreen);
-    addClick('btn_close_screensaver', () => window.close());
+    // 关闭屏保时记录日志
+    addClick('btn_close_screensaver', () => {
+        writeLog('关闭屏保');
+        window.close();
+    });
     addClick('btn_hide_info', hideInfo);
     addClick('btn_bg_tool', bgTool);
     addClick('btn_virtual_keyboard', toggleVirtualKeyboard);
@@ -371,7 +389,6 @@ function createMain() {
         y: 100,
         onClose: () => mainWindowInstance = null
     });
-    // 由于 DivWindow 的 content 同步插入 DOM，可直接绑定事件
     bindMainEvents();
     updateSpecialButtons();
 }
@@ -414,7 +431,6 @@ fullScreenBtn.addEventListener('click', (e) => {
 function checkWindowSize() {
     const state = getWindowState();
 
-    // 悬浮按钮显隐
     if (state === WindowState.SMALL) {
         openBtn.style.display = 'none';
         fullScreenBtn.style.display = 'none';
@@ -427,15 +443,12 @@ function checkWindowSize() {
     }
 
     updateSpecialButtons(state);
-
-    // 更新配置缓存
     loadHdConfig();
 
     if (hdConfigCache) {
         const fso = hdConfigCache.get('FullScreenOperation');
         if (fso && (state === WindowState.LOCKSCREEN || state === WindowState.SCREENSAVER)) {
             if (fso === 'Direct') {
-                // 使用缓存的原始内容进行替换
                 if (hdConfigRaw) {
                     const newContent = hdConfigRaw.replace(
                         /^FullScreenOperation\s*=\s*Direct$/m,
@@ -443,25 +456,26 @@ function checkWindowSize() {
                     );
                     try {
                         fs.writeFileSync(hdConfigPath, newContent, 'utf-8');
-                        loadHdConfig(); // 写回后立即刷新缓存
+                        loadHdConfig();
                     } catch (e) {
                         console.error('写入 hdconfig.ini 失败:', e);
                     }
                 }
                 unlockScreen();
             } else if (fso === 'Disable') {
-                unlockScreen();
+                unlockScreen(); 
             }
         }
 
         if (hdConfigCache.get('ScreenSaver') === 'false' && state === WindowState.SCREENSAVER) {
+            writeLog('关闭屏保');
             window.close();
         }
     }
 }
 
 // 初始化
-loadHdConfig(); 
+loadHdConfig();
 checkWindowSize();
 window.addEventListener('resize', checkWindowSize);
 window.addEventListener('fullscreenchange', checkWindowSize);

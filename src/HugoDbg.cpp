@@ -27,6 +27,7 @@
 #include "WinUtils/CmdParser.h"
 #include "WinUtils/StrConvert.h"
 #include "WinUtils/INI.h"
+#include "WinUtils/Logger.h"
 using namespace std;
 
 namespace fs = filesystem;
@@ -102,32 +103,32 @@ static void handleConfigParams(CmdParser& parser) {
 	fs::path cfgDir = fs::path(L"C:\\Users") / GetCurrentUserName();
 	if (dir) cfgDir = *dir;
 
-	// lockfile 相关（映射为 FullScreenOperation）
-	if (auto param = parser.getParam(L"lockfile", 0)) {
+	// fso 相关（映射为 FullScreenOperation）
+	if (auto param = parser.getParam(L"fso", 0)) {
 		std::wstring value;
-		if (*param == L"fso_assist")      value = L"Assist";
-		else if (*param == L"fso_direct") value = L"Direct";
-		else if (*param == L"fso_disable") value = L"Disable";
+		if (*param == L"assist")      value = L"Assist";
+		else if (*param == L"direct") value = L"Direct";
+		else if (*param == L"disable") value = L"Disable";
 		else {
-			wcerr << L"无效的 lockfile 参数值\n";
-			return;
+			wcerr << L"无效的 fso 参数值\n";
+			goto ss;
 		}
 		writeConfigValue(cfgDir, L"FullScreenOperation", value);
-		wcout << format(L"已设置 FullScreenOperation = {}\n", ConvertString(value));
+		WLog(LogLevel::Info, format(L"已设置 FullScreenOperation = {}", ConvertString(value)));
 	}
 	else {// 默认值（如果用户未指定 lockfile 参数，则设置为 Assist）
 		writeConfigValue(cfgDir, L"FullScreenOperation", L"Assist");
-		wcout << L"已设置 FullScreenOperation = Assist\n";
+		WLog(LogLevel::Info, L"已设置 FullScreenOperation = Assist");
 	}
-
-	// -noscreensaver
-	if (parser.hasCommand(L"noscreensaver")) {
+	ss:
+	// -nss no screensaver
+	if (parser.hasCommand(L"nss")) {
 		writeConfigValue(cfgDir, L"ScreenSaver", L"false");
-		wcout << L"已设置 ScreenSaver = false\n";
+		WLog(LogLevel::Info, L"已设置 ScreenSaver = false");
 	}
 	else {
 		writeConfigValue(cfgDir, L"ScreenSaver", L"true");
-		wcout << L"已设置 ScreenSaver = true\n";
+		WLog(LogLevel::Info, L"已设置 ScreenSaver = true");
 	}
 }
 
@@ -296,6 +297,11 @@ static int mainProcess(bool check, chrono::milliseconds interval,
 int main(int argc, char* argv[]) {
 	Console console;
 	console.setLocale();
+
+	LoggerCore::Inst().SetDefaultStrategies(L"HugoDbg.log");
+	LoggerCore::Inst().AddStrategy<ConsoleLogStrategy>();
+	LoggerCore::Inst().EnableApartment(DftLogger);
+	LoggerCore::Inst().GetDefaultLogger().AddFormat(LogFormat::Time);
 
 	CmdParser parser;
 	auto cmd = ExtractArguments(GetCommandLine());

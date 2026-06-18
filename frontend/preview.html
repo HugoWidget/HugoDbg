@@ -3,104 +3,340 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HugoDbg - 浏览器预览</title>
+  <title>HugoDbg · 功能预览</title>
+  <style>
+    /* ----- 全局样式 ----- */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: radial-gradient(ellipse at center, #1a2a3a 0%, #0d1b2a 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      user-select: none;
+      position: relative;
+    }
+
+    /* ----- 底部切换栏（突出显示） ----- */
+    .switch-bar {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(16px);
+      padding: 12px 24px;
+      border-radius: 50px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      z-index: 99999;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+    }
+    .switch-bar .label {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 13px;
+      font-weight: 500;
+      margin-right: 6px;
+      letter-spacing: 1px;
+    }
+    .switch-bar .btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 30px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .switch-bar .btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      transform: scale(1.04);
+    }
+    .switch-bar .btn.active {
+      background: rgb(26, 144, 255);
+      border-color: rgb(26, 144, 255);
+      box-shadow: 0 0 25px rgba(26, 144, 255, 0.4);
+    }
+    .switch-bar .badge {
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 13px;
+      padding: 4px 14px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 6px;
+    }
+    .switch-bar .badge .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-main { background: #4ade80; }
+    .dot-small { background: #facc15; }
+    .dot-lock { background: #f87171; }
+    .dot-ss { background: #a78bfa; }
+
+    /* 响应式 */
+    @media (max-width: 640px) {
+      .switch-bar { padding: 10px 16px; gap: 4px; bottom: 16px; max-width: 96%; }
+      .switch-bar .btn { padding: 6px 14px; font-size: 12px; }
+      .switch-bar .label { font-size: 11px; }
+      .switch-bar .badge { font-size: 11px; padding: 2px 10px; }
+    }
+
+    /* ----- 浮动按钮（左上角） ----- */
+    #open_btn {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: rgba(26, 144, 255, 0.2);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 28px;
+      cursor: pointer;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    }
+    #open_btn:hover { background: rgba(26, 144, 255, 0.45); transform: scale(1.06); }
+
+    /* ----- 浮动按钮（右上角，用于锁屏/屏保） ----- */
+    #full_btn {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 26px;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    #full_btn:hover { background: rgba(255, 255, 255, 0.2); transform: scale(1.05); }
+
+    /* ----- Toast 提示 ----- */
+    .toast-container {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(8px);
+      color: #fff;
+      padding: 10px 28px;
+      border-radius: 12px;
+      font-size: 14px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      animation: toastIn 0.3s ease, toastOut 0.3s ease 1.8s forwards;
+      pointer-events: auto;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes toastOut {
+      to { opacity: 0; transform: translateY(-20px) scale(0.95); }
+    }
+  </style>
 </head>
 <body>
 
-  <!-- 按依赖顺序加载组件 -->
+  <!-- 浮动按钮 -->
+  <div id="open_btn" title="打开主菜单">☰</div>
+  <div id="full_btn" title="双击打开主菜单 · 三击解锁锁屏">×</div>
+
+  <!-- Toast 容器 -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- 依赖组件（按顺序加载） -->
   <script src="divWindow.js"></script>
   <script src="divDialog.js"></script>
   <script src="vKeyboard.js"></script>
   <script src="miniConsole.js"></script>
 
   <script>
-    // ========== 模拟 Electron 依赖的功能 ==========
-    // 解锁锁屏（浏览器中仅提示）
-    window.unlockScreen = function() {
-      DivDialog.alert('解锁锁屏功能仅在 Electron 环境中可用。', { title: '提示', width: 280 });
-    };
+    // ================================================================
+    //  1. 工具：Toast
+    // ================================================================
+    function showToast(msg, dur = 2000) {
+      const c = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.textContent = msg;
+      c.appendChild(el);
+      setTimeout(() => { if (el.parentNode) el.remove(); }, dur);
+    }
 
-    // 隐藏信息（浏览器中仅提示）
+    // ================================================================
+    //  2. 全局状态与模拟函数
+    // ================================================================
+    let currentState = 'main';   // 'main' | 'small' | 'lockscreen' | 'screensaver'
+    let vkInstance = null;
+    let mainWindowInstance = null;
+
+    // 模拟 Electron 函数
+    window.unlockScreen = function() {
+      showToast('🔓 解锁锁屏 (模拟)', 1500);
+      setState('main');
+    };
     window.hideInfo = function() {
-      // 尝试模拟查找并移除（通常页面上没有这些元素）
       let found = false;
       document.querySelectorAll('span').forEach(e => {
         if (e.textContent.includes('设备ID') || e.textContent.includes('学校代码')) {
-          e.remove();
-          found = true;
+          e.remove(); found = true;
         }
       });
-      DivDialog.alert(found ? '已隐藏找到的设备信息。' : '未找到设备ID或学校代码。', { title: '隐藏信息', width: 250 });
+      showToast(found ? '👁️ 已隐藏设备信息' : '未找到设备ID或学校代码', 1800);
     };
-
-    // 锁屏背景修改（浏览器中仅提示）
-    window.bgTool = function() {
-      DivDialog.alert('锁屏背景修改需要 Electron 环境，无法在浏览器中操作。', { title: '提示', width: 300 });
-    };
-
-    // 版本信息（显示模拟版本）
+    window.bgTool = function() { showToast('🖼️ 修改锁屏背景 (模拟)', 1500); };
     window.showVersion = function() {
       const html = `<pre style="margin:0;font-family:Consolas;font-size:14px;">
-<b>核心组件:</b><br>
-  Electron: 22.0.0（模拟）<br>
+<b>核心组件 (模拟):</b><br>
+  Electron: 22.0.0<br>
   ├─ Chromium: 108.0.5359.62<br>
   ├─ Node.js: 16.17.1<br>
   └─ V8: 10.8.168.6<br><br>
 <b>其他模块 (ABI 108):</b><br>
-  └─ 若干模块仅在 Electron 环境下显示
+  └─ 若干模块仅 Electron 环境可见
 </pre>`;
       new DivWindow({ title: '详细版本信息', content: html, width: 280, height: 300 });
     };
-
-    // ========== 虚拟键盘 ==========
-    let vkInstance = null;
     window.toggleVirtualKeyboard = function() {
       if (!vkInstance) {
         try {
-          vkInstance = new VirtualKeyboard({ 
-            inputSelector: 'input, textarea', 
-            autoEnable: false 
-          });
+          vkInstance = new VirtualKeyboard({ inputSelector: 'input, textarea', autoEnable: false });
         } catch (e) {
-          DivDialog.alert('虚拟键盘加载失败。', { title: '错误' });
-          console.error(e);
+          showToast('❌ 虚拟键盘加载失败', 2000);
           return;
         }
       }
       if (vkInstance.state.isVisible) {
         vkInstance.close();
+        showToast('⌨️ 虚拟键盘已关闭', 1000);
       } else {
         vkInstance.open();
+        showToast('⌨️ 虚拟键盘已打开', 1000);
       }
     };
-
-    // ========== JS 控制台 ==========
     window.openMiniConsole = function() {
       try {
         new MiniConsole();
+        showToast('📟 控制台已打开', 1200);
       } catch (e) {
-        DivDialog.alert('JS 控制台加载失败。', { title: '错误' });
-        console.error(e);
+        showToast('❌ 控制台加载失败', 2000);
       }
     };
 
-    // ========== 主菜单 HTML 内容（对齐 main.js 中的样式） ==========
-    const htmlContent = `
+    // 状态切换核心
+    function setState(state) {
+      currentState = state;
+      const openBtn = document.getElementById('open_btn');
+      const fullBtn = document.getElementById('full_btn');
+      const dot = document.getElementById('statusDot');
+      const label = document.getElementById('statusLabel');
+
+      // 浮动按钮显隐
+      if (state === 'small') {
+        openBtn.style.display = 'none';
+        fullBtn.style.display = 'none';
+      } else if (state === 'main') {
+        openBtn.style.display = 'flex';
+        fullBtn.style.display = 'none';
+      } else { // lockscreen / screensaver
+        openBtn.style.display = 'none';
+        fullBtn.style.display = 'flex';
+      }
+
+      // 更新指示器
+      const dotMap = { main: 'dot-main', small: 'dot-small', lockscreen: 'dot-lock', screensaver: 'dot-ss' };
+      const labelMap = { main: '主界面', small: '小窗模式', lockscreen: '锁屏', screensaver: '屏保' };
+      dot.className = `dot ${dotMap[state] || 'dot-main'}`;
+      label.textContent = labelMap[state] || '主界面';
+
+      // 高亮切换栏按钮
+      document.querySelectorAll('.switch-bar .btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.state === state);
+      });
+
+      // 更新主菜单中的特殊按钮
+      if (mainWindowInstance) {
+        const winEl = mainWindowInstance.windowEl;
+        if (winEl) {
+          const btnUnlock = winEl.querySelector('#btn_unlock');
+          const btnCloseSS = winEl.querySelector('#btn_close_screensaver');
+          const btnHideInfo = winEl.querySelector('#btn_hide_info');
+          if (btnUnlock) btnUnlock.style.display = (state === 'lockscreen') ? 'block' : 'none';
+          if (btnCloseSS) btnCloseSS.style.display = (state === 'screensaver') ? 'block' : 'none';
+          if (btnHideInfo) btnHideInfo.style.display = (state === 'lockscreen' || state === 'screensaver') ? 'block' : 'none';
+        }
+      }
+
+      const toastMap = {
+        main: '🖥️ 切换到主界面',
+        small: '📱 切换到小窗模式',
+        lockscreen: '🔒 切换到锁屏',
+        screensaver: '🌙 切换到屏保'
+      };
+      showToast(toastMap[state] || `切换到 ${state}`, 1500);
+    }
+
+    // ================================================================
+    //  3. 主菜单 HTML
+    // ================================================================
+    const mainHtml = `
 <style>
-:root{--bg:rgb(219,238,255);--btn:rgb(8,209,82);--btn-hover:rgb(6,180,68)}
-*{box-sizing:border-box;margin:0;padding:0}
-.main{width:100%;height:100%;display:flex;flex-direction:column;padding:15px;background:var(--bg);font-family:-apple-system}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:10px}
-.grid button{padding:4px;font-size:13px;color:#fff;background:var(--btn);border:none;border-radius:2px;cursor:pointer;transition:.15s}
-.grid button:hover{background:var(--btn-hover)}
-#version{position:absolute;bottom:4px;right:12px;font-size:10px;color:#333;cursor:pointer}
-#version:hover{color:#000}
+  :root{--bg:rgb(219,238,255);--btn:rgb(8,209,82);--btn-hover:rgb(6,180,68)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  .main{width:100%;height:100%;display:flex;flex-direction:column;padding:15px;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;position:relative}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:10px;flex:1;align-content:start}
+  .grid button{padding:4px;font-size:13px;color:#fff;background:var(--btn);border:none;border-radius:2px;cursor:pointer;transition:background .15s,transform .1s;height:36px}
+  .grid button:hover{background:var(--btn-hover);transform:scale(1.02)}
+  .grid button:active{transform:scale(0.96)}
+  .grid button.hidden-btn{display:none}
+  #version{position:absolute;bottom:4px;right:12px;font-size:10px;color:#333;cursor:pointer}
+  #version:hover{color:#000;text-decoration:underline}
 </style>
 <div class="main">
   <div class="grid">
     <button onclick="location.reload()">刷新页面</button>
-    <button onclick="unlockScreen()">解锁锁屏</button>
-    <button onclick="hideInfo()">隐藏信息</button>
+    <button id="btn_unlock" class="hidden-btn" onclick="unlockScreen()">解锁锁屏</button>
+    <button id="btn_close_screensaver" class="hidden-btn" onclick="setState('main')">关闭屏保</button>
+    <button id="btn_hide_info" class="hidden-btn" onclick="hideInfo()">隐藏信息</button>
     <button onclick="bgTool()">锁屏背景修改</button>
     <button onclick="toggleVirtualKeyboard()">虚拟键盘</button>
     <button onclick="openMiniConsole()">JS控制台</button>
@@ -109,55 +345,117 @@
 </div>
 `;
 
-    // ========== 创建主窗口 ==========
-    let mainWindowInstance = null;
+    // ================================================================
+    //  4. 创建主菜单
+    // ================================================================
     function createMain() {
-      if (mainWindowInstance) {
-        // 如果窗口已存在，尝试聚焦（DivWindow 无 focus 方法，可忽略或模拟）
-        return;
-      }
+      if (mainWindowInstance) return;
       mainWindowInstance = new DivWindow({
         title: '主菜单',
         width: 320,
         height: 180,
-        content: htmlContent,
-        x: 100,
-        y: 100,
-        onClose: function() { mainWindowInstance = null; }
+        content: mainHtml,
+        x: Math.max(20, (window.innerWidth - 320) / 2),
+        y: Math.max(20, (window.innerHeight - 180) / 2 - 30),
+        onClose: () => { mainWindowInstance = null; }
       });
+      setTimeout(() => {
+        if (mainWindowInstance) {
+          const winEl = mainWindowInstance.windowEl;
+          if (winEl) {
+            const s = currentState;
+            const btnUnlock = winEl.querySelector('#btn_unlock');
+            const btnCloseSS = winEl.querySelector('#btn_close_screensaver');
+            const btnHideInfo = winEl.querySelector('#btn_hide_info');
+            if (btnUnlock) btnUnlock.style.display = (s === 'lockscreen') ? 'block' : 'none';
+            if (btnCloseSS) btnCloseSS.style.display = (s === 'screensaver') ? 'block' : 'none';
+            if (btnHideInfo) btnHideInfo.style.display = (s === 'lockscreen' || s === 'screensaver') ? 'block' : 'none';
+          }
+        }
+      }, 20);
     }
 
-    // 页面加载完成后自动打开主菜单
-    createMain();
+    // ================================================================
+    //  5. 初始化
+    // ================================================================
+    function init() {
+      // 左上角按钮
+      document.getElementById('open_btn').addEventListener('click', createMain);
 
-    // ========== 可选：模拟悬浮按钮 ==========
-    // 在浏览器中全屏按钮通常不会显示，但可以添加一个固定的触发器
-    const openBtn = document.createElement('div');
-    openBtn.id = 'open_btn';
-    Object.assign(openBtn.style, {
-      position: 'fixed',
-      top: '4px',
-      left: '4px',
-      width: '50px',
-      height: '50px',
-      cursor: 'pointer',
-      opacity: 0.7,
-      zIndex: 9999,
-      backgroundColor: 'rgba(0,0,0,0.3)',
-      borderRadius: '50%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: '#fff',
-      fontSize: '20px',
-      border: 'none'
-    });
-    openBtn.textContent = '☰';
-    openBtn.addEventListener('click', createMain);
-    document.body.appendChild(openBtn);
+      // 右上角按钮：双击打开主菜单，三击解锁锁屏
+      const fullBtn = document.getElementById('full_btn');
+      let clickCount = 0, clickTimer = null;
+      fullBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        clickCount++;
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => clickCount = 0, 400);
+        if (clickCount === 2) { createMain(); clickCount = 0; }
+        else if (clickCount === 3) { showToast('🔓 三击解锁锁屏 (模拟)', 1500); setState('main'); clickCount = 0; }
+      });
 
-    // 如果主窗口关闭，可以通过悬浮按钮再次打开
-    // 不需要双击/三击等触发，直接点击悬浮按钮即可
+      // 切换栏按钮
+      document.querySelectorAll('.switch-bar .btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const state = this.dataset.state;
+          if (state) setState(state);
+        });
+      });
+
+      // 默认状态：主界面
+      setState('main');
+
+      // 自动打开主菜单
+      setTimeout(createMain, 400);
+
+      // 窗口 resize 调整主菜单位置
+      window.addEventListener('resize', function() {
+        if (mainWindowInstance) {
+          const winEl = mainWindowInstance.windowEl;
+          if (winEl) {
+            const rect = winEl.getBoundingClientRect();
+            const maxX = window.innerWidth - rect.width;
+            const maxY = window.innerHeight - rect.height;
+            let left = parseInt(winEl.style.left) || 0;
+            let top = parseInt(winEl.style.top) || 0;
+            if (left > maxX) winEl.style.left = `${Math.max(0, maxX)}px`;
+            if (top > maxY) winEl.style.top = `${Math.max(0, maxY)}px`;
+          }
+        }
+      });
+
+      // ESC 关闭主菜单
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && mainWindowInstance) {
+          mainWindowInstance.close();
+          mainWindowInstance = null;
+        }
+      });
+
+      console.log('✅ HugoDbg 预览已启动');
+      console.log('💡 点击底部切换栏切换窗口模式');
+      console.log('💡 点击左上角 ☰ 打开主菜单');
+      console.log('💡 双击右上角 × 打开主菜单，三击解锁锁屏');
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
   </script>
+
+  <!-- 底部切换栏（HTML 结构） -->
+  <div class="switch-bar">
+    <span class="label">切换状态</span>
+    <button class="btn active" data-state="main">主界面</button>
+    <button class="btn" data-state="small">小窗</button>
+    <button class="btn" data-state="lockscreen">锁屏</button>
+    <button class="btn" data-state="screensaver">屏保</button>
+    <span class="badge">
+      <span class="dot dot-main" id="statusDot"></span>
+      <span id="statusLabel">主界面</span>
+    </span>
+  </div>
 </body>
 </html>
