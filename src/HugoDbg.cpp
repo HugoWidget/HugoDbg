@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
 	LoggerCore::Inst().GetDefaultLogger().AddFormat(LogFormat::Time);
 
 	CmdParser parser;
-	auto cmd = ExtractArguments(GetCommandLine());
+	auto cmd = ExtractArguments(GetCommandLineW());
 	if (!parser.parse(cmd)) {
 		wcout << L"命令行解析失败：" << cmd;
 		return 0;
