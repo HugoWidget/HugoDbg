@@ -27,6 +27,7 @@
     <ClCompile Include="src\WinsockInitializer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="resource.h" />
     <ClInclude Include="src\CDPClient.h" />
     <ClInclude Include="src\Debugger.h" />
     <ClInclude Include="src\HttpClient.h" />
@@ -34,6 +35,12 @@
     <ClInclude Include="src\Strings.h" />
     <ClInclude Include="src\WebSocket.h" />
     <ClInclude Include="src\WinsockInitializer.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="HugoDbg.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icons\dark.ico" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

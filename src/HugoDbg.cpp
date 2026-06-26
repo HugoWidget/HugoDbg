@@ -114,21 +114,21 @@ static void handleConfigParams(CmdParser& parser) {
 			goto ss;
 		}
 		writeConfigValue(cfgDir, L"FullScreenOperation", value);
-		WLog(LogLevel::Info, format(L"已设置 FullScreenOperation = {}", ConvertString(value)));
+		WuLog::Info(L"已设置 FullScreenOperation = {}", ConvertString(value));
 	}
 	else {// 默认值（如果用户未指定 lockfile 参数，则设置为 Assist）
 		writeConfigValue(cfgDir, L"FullScreenOperation", L"Assist");
-		WLog(LogLevel::Info, L"已设置 FullScreenOperation = Assist");
+		WuLog::Info(L"已设置 FullScreenOperation = Assist");
 	}
 	ss:
 	// -nss no screensaver
 	if (parser.hasCommand(L"nss")) {
 		writeConfigValue(cfgDir, L"ScreenSaver", L"false");
-		WLog(LogLevel::Info, L"已设置 ScreenSaver = false");
+		WuLog::Info(L"已设置 ScreenSaver = false");
 	}
 	else {
 		writeConfigValue(cfgDir, L"ScreenSaver", L"true");
-		WLog(LogLevel::Info, L"已设置 ScreenSaver = true");
+		WuLog::Info(L"已设置 ScreenSaver = true");
 	}
 }
 
@@ -298,10 +298,11 @@ int main(int argc, char* argv[]) {
 	Console console;
 	console.setLocale();
 
-	LoggerCore::Inst().SetDefaultStrategies(L"HugoDbg.log");
-	LoggerCore::Inst().AddStrategy<ConsoleLogStrategy>();
-	LoggerCore::Inst().EnableApartment(DftLogger);
-	LoggerCore::Inst().GetDefaultLogger().AddFormat(LogFormat::Time);
+	auto& core = LoggerCore::Inst();
+	core.AddFileStrategy(L"HugoDbg.log");
+	auto emptyFmt = std::make_shared<LogFormatter>(std::vector<LogFormat>{});
+	core.AddStrategy<ConsoleLogStrategy>(emptyFmt);
+	core.EnableApartment(DftLogger);
 
 	CmdParser parser;
 	auto cmd = ExtractArguments(GetCommandLineW());
