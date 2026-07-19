@@ -1,9 +1,12 @@
 const isSW = typeof require == 'function';
 const apiKey = '7c5a1bae0eae82d8246c6cb70be0beb5';
-const channel = 'channel-0a44efbc3';
+const channel = 'channel-0a4efbc3';
 const ipcRenderer = require('electron').ipcRenderer;
 
 let vKeyboardInstance = null;
+
+// 不要改变这行，脚本会处理，替换为实际内容
+const pluginLoaderJS = "这里应该为空，但是处理后执行出错，暂时弃用插件功能";
 
 // 执行脚本通信
 function doEval(script) {
@@ -60,7 +63,9 @@ function saveConfig(newConfig) {
 let globalConfig = loadConfig();
 
 // 配置自动生效
-if (globalConfig.plugins) doEval('');
+if (globalConfig.plugins) {
+    doEval(pluginLoaderJS);
+}
 if (globalConfig.backgroundImage) {
     let times = 0;
     const timer = setInterval(() => {
@@ -168,6 +173,10 @@ function showStatusInfo() {
     }
 
     DivDialog.alert(info, { title: '当前状态与配置', width: 350 });
+}
+
+function toggleDevTools() {
+
 }
 
 function isValidImageUrl(url) {
@@ -344,6 +353,7 @@ const htmlContent = `
 <button id="btn_virtual_keyboard">虚拟键盘</button>
 <button id="btn_mini_console">JS控制台</button>
 <button id="btn_show_status">状态配置</button>
+<button id="btn_devtools">打开DevTools</button>
 </div>
 <div id="version">HugoDbg v1.0.0</div>
 </div>
@@ -369,6 +379,7 @@ function bindMainEvents() {
     addClick('btn_virtual_keyboard', toggleVirtualKeyboard);
     addClick('btn_mini_console', openMiniConsole);
     addClick('btn_show_status', showStatusInfo);
+    addClick('btn_devtools', toggleDevTools);
 
     const verEl = document.getElementById('version');
     if (verEl) verEl.addEventListener('click', showVersion);
