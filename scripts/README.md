@@ -8,19 +8,9 @@
 .
 ├── build.py                  # 主构建脚本
 ├── frontend/                 # 源 JS 文件目录
-│   ├── pluginLoader.js       # 插件加载器
-│   ├── selfcheck.js          # 自检模块
-│   ├── divWindow.js          # 窗口组件
-│   ├── divDialog.js          # 对话框组件
-│   ├── miniConsole.js        # 迷你控制台
-│   ├── vKeyboard.js          # 虚拟键盘
-│   ├── main.js               # 主入口
-│   ├── test.js               # 测试脚本
-│   ├── clean.js              # 清理脚本
-│   └── loader.js             # 加载器脚本
 └── build/                    # 输出目录
+    ├── HugoDbgJS             # 可供注入的外部脚本
     ├── scripts.h             # 最终 C 头文件
-    ├── inject.json           # 注入命令列表
     ├── bundle.min.js         # 压缩后的完整脚本
     └── *.min.js              # 各模块压缩版本
 ```

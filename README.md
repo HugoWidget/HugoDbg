@@ -51,6 +51,8 @@ HugoDbg 通过调试器注入希沃管家进程，利用 Chrome DevTools Protoco
 5. 运行生成的 `HugoDbg.exe`，可通过命令行参数控制行为（见下文）。
 
 > `build.py` 负责把 `frontend/` 下的 JS 源码压缩、打包为 C++ 可直接嵌入的脚本资源（`scripts.h`），并同时导出可用于 `--override` 的 `HugoDbgJs/` 目录。
+>
+> 详见 [前端构建脚本说明](scripts/README.md)
 
 ## 命令行参数
 
