@@ -139,6 +139,50 @@ def process_loader_file():
     output_path.write_text(minified, encoding='utf-8')
     return minified
 
+def export_hugo_dbg_js(loader_js: str, test_js: str, clean_js: str, injection_commands: list):
+    """将构建产物导出为 HugoDbg.exe --override 所需的 HugoDbgJs/ 目录。
+
+    目录内容：
+        HugoDbgJs/
+        ├── loader.js
+        ├── test.js
+        ├── clean.js
+        ├── bundle_1.js
+        ├── bundle_2.js
+        └── ...
+    C++ 侧在 --override 时按此命名读取；缺失项回退内置默认。
+    注意：一旦存在 bundle_1.js，内置 bundle 集合整体被替换为自定义集合。
+    """
+    out_dir = BUILD_DIR / "HugoDbgJs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 清理旧的 bundle_N.js，避免自定义 bundle 数量与本次构建不一致时残留
+    for old in out_dir.glob("bundle_*.js"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+    (out_dir / "loader.js").write_text(loader_js, encoding='utf-8')
+    (out_dir / "test.js").write_text(test_js, encoding='utf-8')
+    (out_dir / "clean.js").write_text(clean_js, encoding='utf-8')
+
+    for idx, cmd in enumerate(injection_commands, 1):
+        (out_dir / f"bundle_{idx}.js").write_text(cmd, encoding='utf-8')
+
+    # 附带一份 inject.json 便于查看（C++ 不读取此文件）
+    try:
+        (out_dir / "inject.json").write_text(
+            json.dumps(injection_commands, indent=2, ensure_ascii=False),
+            encoding='utf-8'
+        )
+    except Exception:
+        pass
+
+    print(f"Exported HugoDbgJs: {out_dir.resolve()}")
+    print(f"  - loader.js / test.js / clean.js")
+    print(f"  - bundle_1.js .. bundle_{len(injection_commands)}.js  (共 {len(injection_commands)} 个)")
+
 def generate_c_header(test_js: str, clean_js: str, injection_commands: list, loader_js: str):
     output_path = BUILD_DIR / "scripts.h"
     test_lit = to_c_string_literal(test_js)
@@ -173,7 +217,11 @@ def build():
         test_js = process_test_file()
         clean_js = process_clean_file()
         loader_js = process_loader_file()
+
         generate_c_header(test_js, clean_js, injection_cmds, loader_js)
+
+        # 导出 --override 用的 HugoDbgJs/ 目录
+        export_hugo_dbg_js(loader_js, test_js, clean_js, injection_cmds)
 
         print('BUILD SUCCESS')
     except Exception as e:

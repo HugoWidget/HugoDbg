@@ -1,3 +1,21 @@
+ï»¿/*
+ * Copyright 2025-2026 howdy213, JYardX
+ *
+ * This file is part of HugoProgs.
+ *
+ * HugoProgs is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * HugoProgs is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with HugoProgs. If not, see <https://www.gnu.org/licenses/>.
+ */
 #ifndef HTTP_CLIENT_H
 #define HTTP_CLIENT_H
 
@@ -5,8 +23,8 @@
 
 class HttpClient {
 public:
-    static bool init();      // ±ØĞëÔÚÊ¹ÓÃÇ°µ÷ÓÃ
-    static void cleanup();   // ³ÌĞò½áÊøÇ°µ÷ÓÃ
+    static bool init();      // å¿…é¡»åœ¨ä½¿ç”¨å‰è°ƒç”¨
+    static void cleanup();   // ç¨‹åºç»“æŸå‰è°ƒç”¨
     static bool checkPort(const char* host, int port);
     static int get(const char* host, int port, const char* path, char* response, size_t response_size);
 };

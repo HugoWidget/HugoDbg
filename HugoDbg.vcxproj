@@ -20,21 +20,28 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CDPClient.cpp" />
+    <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\Debugger.cpp" />
+    <ClCompile Include="src\Heartbeat.cpp" />
     <ClCompile Include="src\HttpClient.cpp" />
     <ClCompile Include="src\HugoDbg.cpp" />
+    <ClCompile Include="src\Injector.cpp" />
+    <ClCompile Include="src\ScriptsLoader.cpp" />
     <ClCompile Include="src\WebSocket.cpp" />
-    <ClCompile Include="src\WinsockInitializer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\CDPClient.h" />
+    <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\Debugger.h" />
+    <ClInclude Include="src\DebuggerSession.h" />
+    <ClInclude Include="src\Heartbeat.h" />
     <ClInclude Include="src\HttpClient.h" />
+    <ClInclude Include="src\Injector.h" />
     <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\scripts.h" />
+    <ClInclude Include="src\ScriptsLoader.h" />
     <ClInclude Include="src\Strings.h" />
     <ClInclude Include="src\WebSocket.h" />
-    <ClInclude Include="src\WinsockInitializer.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="icons\dark.ico" />

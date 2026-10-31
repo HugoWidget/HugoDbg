@@ -1,305 +1,241 @@
-﻿#include "WinUtils/WinPch.h"
-
+﻿/*
+ * Copyright 2025-2026 howdy213, JYardX
+ *
+ * This file is part of HugoProgs.
+ *
+ * HugoProgs is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * HugoProgs is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with HugoProgs. If not, see <https://www.gnu.org/licenses/>.
+ */
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <iostream>
 #include <memory>
-#include <optional>
-#include <span>
 #include <string>
-#include <string_view>
 #include <thread>
+#include <Windows.h>
 #include <tlhelp32.h>
 
-#include "CDPClient.h"
-#include "Debugger.h"
-#include "HttpClient.h"
+#include "Config.h"
+#include "Heartbeat.h"
+#include "Injector.h"
+#include "ScriptsLoader.h"
 #include "Strings.h"
-#include "scripts.h"
 
-#include "WinUtils/AWDef.h"
 #include "WinUtils/Console.h"
-#include "WinUtils/WinUtilsDef.h"
-#include "WinUtils/WinUtils.h"
 #include "WinUtils/CmdParser.h"
-#include "WinUtils/StrConvert.h"
-#include "WinUtils/INI.h"
 #include "WinUtils/Logger.h"
+#include "WinUtils/StrConvert.h"
+#include "WinUtils/WinUtils.h"
+
 using namespace std;
-
-namespace fs = filesystem;
 using namespace WinUtils;
-using namespace chrono_literals;
+using namespace std::chrono_literals;
 
-// 配置文件固定名
-constexpr wchar_t CONFIG_FILE[] = L"hdconfig.ini";
-// 统一使用一个节名（前端可不关心）
-constexpr wchar_t CONFIG_SECTION[] = L"General";
+inline constexpr int CMD_PARSER_FAILED = 2;
+inline constexpr int TIMEOUT_NOT_INJECTED = 3;
 
-// HTTP 初始化/清理
-struct HttpClientGuard {
-	HttpClientGuard() { HttpClient::init(); }
-	~HttpClientGuard() { HttpClient::cleanup(); }
-};
-
-// 调试会话：连接调试器并持有 CDPClient
-class DebuggerSession {
-	CDPClient* client_ = nullptr;
-public:
-	explicit DebuggerSession(DWORD pid) {
-		if (Debugger::connect(pid) != DEBUGGER_SUCCESS)
-			throw runtime_error("Debugger::connect 失败");
-	}
-	void setClient(CDPClient* c) { client_ = c; }
-	CDPClient* client() const { return client_; }
-	~DebuggerSession() {
-		if (client_) {
-			Debugger::disconnect(client_);
-			delete client_;
-		}
-	}
-	// 禁止拷贝
-	DebuggerSession(const DebuggerSession&) = delete;
-	DebuggerSession& operator=(const DebuggerSession&) = delete;
-};
-
-static optional<wstring> getProcessName(DWORD pid) {
-	auto pe32 = FindFirstProcess([pid](const TF(PROCESSENTRY32)& entry) {
-		return pid == entry.th32ProcessID;
-		});
-	return pe32 ? optional<wstring>(pe32->szExeFile) : nullopt;
-}
-
-static void writeConfigValue(const fs::path& dir,
-	const std::wstring& key,
-	const std::wstring& value) {
-	fs::path cfgPath = dir / CONFIG_FILE;
-	try {
-		WinUtils::INIFile ini(cfgPath);
-		WinUtils::INIStructure data;
-
-		// 读取已有配置（文件不存在时 data 为空）
-		if (fs::exists(cfgPath)) {
-			ini.read(data);
-		}
-
-		// 设置目标键值
-		data[CONFIG_SECTION][key] = value;
-
-		// 写回文件
-		ini.write(data, false);
-	}
-	catch (const std::exception& e) {
-		std::wcerr << L"写入配置失败: " << ConvertString(e.what()) << L'\n';
-	}
-}
-
-// 统一处理所有与配置文件相关的命令行参数
-static void handleConfigParams(CmdParser& parser) {
-	auto dir = parser.getParam(L"dir", 0);
-	fs::path cfgDir = fs::path(L"C:\\Users") / GetCurrentUserName();
-	if (dir) cfgDir = *dir;
-
-	// fso 相关（映射为 FullScreenOperation）
-	if (auto param = parser.getParam(L"fso", 0)) {
-		std::wstring value;
-		if (*param == L"assist")      value = L"Assist";
-		else if (*param == L"direct") value = L"Direct";
-		else if (*param == L"disable") value = L"Disable";
-		else {
-			wcerr << L"无效的 fso 参数值\n";
-			goto ss;
-		}
-		writeConfigValue(cfgDir, L"FullScreenOperation", value);
-		WuLog::Info(L"已设置 FullScreenOperation = {}", ConvertString(value));
-	}
-	else {// 默认值（如果用户未指定 lockfile 参数，则设置为 Assist）
-		writeConfigValue(cfgDir, L"FullScreenOperation", L"Assist");
-		WuLog::Info(L"已设置 FullScreenOperation = Assist");
-	}
-	ss:
-	// -nss no screensaver
-	if (parser.hasCommand(L"nss")) {
-		writeConfigValue(cfgDir, L"ScreenSaver", L"false");
-		WuLog::Info(L"已设置 ScreenSaver = false");
-	}
-	else {
-		writeConfigValue(cfgDir, L"ScreenSaver", L"true");
-		WuLog::Info(L"已设置 ScreenSaver = true");
-	}
-}
-
-// 网络与脚本执行
-static bool waitForDebugPort(string_view host, int port,
-	chrono::seconds timeout) {
-	auto deadline = chrono::steady_clock::now() + timeout;
-	while (chrono::steady_clock::now() < deadline) {
-		if (HttpClient::checkPort(host.data(), port))
-			return true;
-		this_thread::sleep_for(1ms);
-	}
-	return false;
-}
-
-static bool executeScript(CDPClient* client, string_view script,
-	wstring_view opName) {
-	string result(4096, '\0');
-	if (client->evaluate(script.data(), result.data(), result.size()) == 0) {
-		wcout << format(Strings::OpSucceeded, opName) << ConvertString(result) << endl;
-		return true;
-	}
-	wcout << format(Strings::OpFailed, opName);
-	return false;
-}
-
-// 通用模式运行
-static int runModeWithLoader(CDPClient* client, string_view script,
-	wstring_view modeName) {
-	wcout << format(Strings::RunningMode, modeName);
-	if (!executeScript(client, loader_js, Strings::LoaderName))
-		return 0;
-
-	int success = 1;
-	this_thread::sleep_for(20ms);
-	wcout << Strings::Waiting;
-	if (executeScript(client, script, modeName))
-		++success;
-	return success;
-}
-
-// 三种运行模式
-static int runMainMode(CDPClient* client) {
-	int success = 0;
-	wcout << format(Strings::RunningMode, Strings::MainName);
-
-	if (executeScript(client, loader_js, Strings::LoaderName)) {
-		++success;
-		this_thread::sleep_for(20ms);
-
-		span bundle(bundle_js);
-		wcout << Strings::Waiting;
-		for (size_t i = 0; i < bundle.size(); ++i) {
-			auto desc = format(L"片段 #{}/{}", i + 1, bundle.size());
-			if (executeScript(client, bundle[i], desc))
-				++success;
-			this_thread::sleep_for(15ms);
-		}
-	}
-	return success;
-}
-
-static int runCleanupMode(CDPClient* client) {
-	return runModeWithLoader(client, clean_js, Strings::CleanupName);
-}
-
-static int runTestMode(CDPClient* client) {
-	return runModeWithLoader(client, test_js, Strings::TestName);
-}
-
-// 主流程
-enum class DbgMode { Main, Cleanup, Test };
-
-static int mainProcess(bool check, chrono::milliseconds interval,
-	chrono::milliseconds timeout, DbgMode mode) {
-	wcout << format(L"check?: {}\n", check);
-	wcout << format(L"interval: {}ms\n", interval.count());
-	wcout << format(L"timeout:  {}ms\n", timeout.count());
-	wcout << format(L"mode:     {}\n",
-		mode == DbgMode::Main ? Strings::MainName :
-		mode == DbgMode::Cleanup ? Strings::CleanupName
-		: Strings::TestName);
-
-	wcout << Strings::MainStart;
-	int consecutive = 0;
-	constexpr int required = 3;
-	DWORD targetPid = 0;
-	optional<TF(PROCESSENTRY32)>pe32 = nullopt;
-	auto start = chrono::steady_clock::now();
-	while (true) {
-		pe32 = FindFirstProcess([](const TF(PROCESSENTRY32)& entry) {
-			if (entry.szExeFile == (wstring)L"SeewoServiceAssistant.exe") {
-				if (auto parentName = getProcessName(entry.th32ParentProcessID))
-					if (*parentName == L"SeewoCore.exe")
-						return true;
-			}
-			return false;
+namespace HugoDbg {
+	std::optional<std::wstring> getProcessName(DWORD pid) {
+		auto pe32 = WinUtils::FindFirstProcess([pid](const TF(PROCESSENTRY32)& e) {
+			return pid == e.th32ProcessID;
 			});
-		if (!check && pe32) break;
+		return pe32 ? std::optional<std::wstring>(pe32->szExeFile) : std::nullopt;
+	}
 
-		if (pe32) {
-			++consecutive;
-			wcout << format(Strings::MainDetected, pe32->th32ProcessID, consecutive, required);
-			if (consecutive >= required) {
-				wcout << Strings::MainInjecting;
+	inline constexpr int REINJECT_COOLDOWN_SECONDS = 40;
+	inline constexpr int STATUS_PRINT_INTERVAL_MS = 5000;
+	inline constexpr int COOLDOWN_PRINT_INTERVAL_MS = 5000;
+
+	static int mainProcess(bool check, std::chrono::milliseconds interval,
+		std::chrono::milliseconds timeout,
+		DbgMode mode, const ScriptsBundle& scripts) {
+		const bool isMain = (mode == DbgMode::Main);
+
+		std::wcout << std::format(L"check?: {}\n", check);
+		std::wcout << std::format(L"interval: {}ms\n", interval.count());
+		std::wcout << std::format(L"timeout:  {}ms\n", timeout.count());
+		std::wcout << std::format(L"mode:     {}\n",
+			mode == DbgMode::Main ? Strings::MainName :
+			mode == DbgMode::Cleanup ? Strings::CleanupName : Strings::TestName);
+
+		std::wcout << Strings::MainStart;
+		int consecutive = 0;
+		constexpr int required = 3;
+		auto start = std::chrono::steady_clock::now();
+
+		// 仅 Main 模式使用：标识当前是否处于"已注入/已检测到 alive"状态
+		bool injected = false;
+		// 仅 Main 模式使用：一旦为 true，--timeout 永久失效，进入常驻守护
+		bool everInjected = false;
+		auto lastInjectTime = start - std::chrono::seconds(REINJECT_COOLDOWN_SECONDS + 1);
+		// PID 跟踪：用于识别目标进程重启
+		DWORD lastPid = 0;
+		int lastResult = TIMEOUT_NOT_INJECTED;
+		auto lastStatusPrint = std::chrono::steady_clock::now();
+		auto lastCooldownPrint = (std::chrono::steady_clock::time_point::min)();
+
+		while (true) {
+			auto pe32 = FindFirstProcess([](const TF(PROCESSENTRY32)& entry) {
+				if (entry.szExeFile == (std::wstring)L"SeewoServiceAssistant.exe") {
+					if (auto parentName = getProcessName(entry.th32ParentProcessID))
+						if (*parentName == L"SeewoCore.exe") return true;
+				}
+				return false;
+				});
+
+			DWORD currentPid = pe32 ? pe32->th32ProcessID : 0;
+
+			if (!pe32) {
+				if (consecutive > 0) { std::wcout << Strings::MainLost; consecutive = 0; }
+				if (isMain) injected = false;
+				lastPid = 0;
+			}
+			else {
+				// ===== PID 变化检测（目标进程重启）=====
+				// 目标进程重启时，旧进程遗留的活跃 alive 文件对新进程无意义，
+				// 必须删除，否则 isAliveFileActive() 会误判新进程"已注入"。
+				if (lastPid != 0 && lastPid != currentPid) {
+					std::wcout << std::format(
+						L"目标进程 PID 变化 ({} -> {})，重置注入状态\n",
+						lastPid, currentPid);
+					consecutive = 0;
+					if (isMain) {
+						injected = false;
+						if (isAliveFileActive()) {
+							std::wcout << L"检测到旧进程遗留的活跃心跳文件，删除以避免误判\n";
+							removeAliveFile();
+						}
+					}
+				}
+				lastPid = currentPid;
+				// =========================================
+
+				if (check && !injected && consecutive < required) {   // 仅默认模式、未注入时才计数打印
+					++consecutive;
+					std::wcout << std::format(Strings::MainDetected,
+						pe32->th32ProcessID, consecutive, required);
+				}
+
+				bool shouldRun = (!check && !injected) || (consecutive >= required);
+				if (shouldRun) {
+					if (isMain) {
+						// ========== Main：alive 检测 + 冷却重注入 ==========
+						if (isAliveFileActive()) {
+							if (!injected) {
+								std::wcout << L"检测到注入正在运行，继续监控\n";
+								injected = true;
+								everInjected = true;
+								lastInjectTime = std::chrono::steady_clock::now();
+							}
+						}
+						else {
+							auto now = std::chrono::steady_clock::now();
+							// 冷却始终生效（含进程重启后的首次注入），与文档一致
+							bool canRetry = (now - lastInjectTime) >=
+								std::chrono::seconds(REINJECT_COOLDOWN_SECONDS);
+							if (canRetry) {
+								lastInjectTime = now;
+								injected = true;
+								lastResult = injectOnce(pe32->th32ProcessID, mode, scripts);
+								if (lastResult == 0) {
+									everInjected = true;
+									std::wcout << L"[检测] 注入成功，当前心跳状态: "
+										<< describeAliveStatus() << L'\n';
+								}
+								else {
+									std::wcout << L"注入失败，将在下一次迭代重试\n";
+								}
+							}
+							else if (!injected &&
+								(now - lastCooldownPrint) >= std::chrono::milliseconds(COOLDOWN_PRINT_INTERVAL_MS)) {
+								// 冷却期间即使未注入也不重试；限频打印避免刷屏
+								lastCooldownPrint = now;
+								auto remain = std::chrono::duration_cast<std::chrono::seconds>(
+									std::chrono::seconds(REINJECT_COOLDOWN_SECONDS) - (now - lastInjectTime)).count();
+								std::wcout << std::format(
+									L"[冷却] 距允许重试注入约 {} 秒\n", remain);
+							}
+						}
+						// ==================================================
+					}
+					else {
+						// ========== Cleanup / Test：一次性注入后退出 ==========
+						// 不检查 alive 文件，不写心跳；无论成功失败都只注入一次。
+						lastResult = injectOnce(pe32->th32ProcessID, mode, scripts);
+						return lastResult;
+						// =======================================================
+					}
+				}
+			}
+
+			// ---------- 周期性打印（仅 Main 有意义） ----------
+			if (isMain) {
+				auto nowTick = std::chrono::steady_clock::now();
+				if (nowTick - lastStatusPrint >= std::chrono::milliseconds(STATUS_PRINT_INTERVAL_MS)) {
+					lastStatusPrint = nowTick;
+					if (pe32) {
+						std::wcout << std::format(L"[检测] 目标进程存在 (PID: {}) | {}\n",
+							currentPid, describeAliveStatus());
+					}
+					else {
+						std::wcout << std::format(L"[检测] 目标进程不存在 | {}\n",
+							describeAliveStatus());
+					}
+				}
+			}
+			// -----------------------------------------------------
+
+			// ---------- timeout 判定 ----------
+			// Main：未 everInjected 时生效；一旦首次成功即失效，常驻
+			// Cleanup / Test：等待进程 + 单次注入，注入后已 return，故超时即退出
+			bool timedOut = false;
+			auto elapsed = std::chrono::steady_clock::now() - start;
+			if (isMain) {
+				if (!everInjected && elapsed > timeout) timedOut = true;
+			}
+			else {
+				if (elapsed > timeout) timedOut = true;
+			}
+			if (timedOut) {
+				if (isMain) {
+					std::wcout << std::format(
+						L"\n等待目标进程/首次注入超过 {:.1f} 秒，程序停止\n",
+						timeout.count() / 1000.0);
+				}
+				else {
+					std::wcout << std::format(
+						L"\n等待目标进程超过 {:.1f} 秒，程序停止\n",
+						timeout.count() / 1000.0);
+				}
 				break;
 			}
-		}
-		else {
-			if (consecutive > 0) {
-				wcout << Strings::MainLost;
-				consecutive = 0;
-			}
-		}
+			// ------------------------------------
 
-		if (chrono::steady_clock::now() - start > timeout) {
-			wcout << format(L"\n运行时间超过 {:.1f} 秒，程序停止\n",
-				timeout.count() / 1000.0);
-			return 0;
+			std::this_thread::sleep_for(interval);
 		}
-		this_thread::sleep_for(interval);
+		return lastResult;
 	}
-	targetPid = pe32->th32ProcessID;
-	HttpClientGuard httpGuard;
-	wcout << Strings::InjectStart;
-
-	try {
-		DebuggerSession session(targetPid);
-
-		if (!waitForDebugPort("127.0.0.1", 9229, 5s)) {
-			wcout << Strings::PipeTimeout;
-			return 1;
-		}
-
-		auto client = new CDPClient();
-		if (client->connectTarget("127.0.0.1", 9229, "node") != 0) {
-			delete client;
-			wcout << Strings::PipeFailed;
-			return 1;
-		}
-		if (client->enableRuntime() != 0) {
-			delete client;
-			wcout << Strings::RuntimeFailed;
-			return 1;
-		}
-
-		session.setClient(client);
-
-		int successCount = 0;
-		switch (mode) {
-		case DbgMode::Main:    successCount = runMainMode(client);    break;
-		case DbgMode::Cleanup: successCount = runCleanupMode(client); break;
-		case DbgMode::Test:    successCount = runTestMode(client);    break;
-		}
-
-		wcout << format(Strings::MainDone,
-			successCount > 0 ? Strings::Succeeded : Strings::Failed);
-		return (successCount > 0) ? 0 : 1;
-	}
-	catch (const exception& e) {
-		wcout << format(Strings::InjectFailed, ConvertString(e.what()));
-		return 1;
-	}
-}
+} // namespace HugoDbg
 
 int main(int argc, char* argv[]) {
 	Console console;
 	console.setLocale();
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+	EnsureSingleInstance(true);
 
 	auto& core = LoggerCore::Inst();
-	core.AddFileStrategy(L"HugoDbg.log");
+	core.SetDefaultStrategies(GetCurrentProcessDir() + L"HugoDbg.log");
 	auto emptyFmt = std::make_shared<LogFormatter>(std::vector<LogFormat>{});
 	core.AddStrategy<ConsoleLogStrategy>(emptyFmt);
 	core.EnableApartment(DftLogger);
@@ -307,25 +243,37 @@ int main(int argc, char* argv[]) {
 	CmdParser parser;
 	auto cmd = ExtractArguments(GetCommandLineW());
 	if (!parser.parse(cmd)) {
-		wcout << L"命令行解析失败：" << cmd;
-		return 0;
+		std::wcout << L"命令行解析失败：" << cmd;
+		return CMD_PARSER_FAILED;
 	}
 
 	bool check = !parser.hasCommand(L"nocheck");
-	handleConfigParams(parser);
+	HugoDbg::handleConfigParams(parser);
+	HugoDbg::setAliveDir(HugoDbg::resolveConfigDir(parser));
 
-	DbgMode mode = DbgMode::Main;
-	if (parser.hasCommand(L"cleanup")) mode = DbgMode::Cleanup;
-	else if (parser.hasCommand(L"test")) mode = DbgMode::Test;
+	HugoDbg::DbgMode mode = HugoDbg::DbgMode::Main;
+	if (parser.hasCommand(L"cleanup")) mode = HugoDbg::DbgMode::Cleanup;
+	else if (parser.hasCommand(L"test"))    mode = HugoDbg::DbgMode::Test;
+
+	// 心跳文件路径与初始状态只在 Main 模式下有意义
+	if (mode == HugoDbg::DbgMode::Main) {
+		std::wcout << L"[心跳] 检测文件: " << HugoDbg::getAliveFilePath().wstring() << L'\n';
+		std::wcout << L"[心跳] 初始状态: " << HugoDbg::describeAliveStatus() << L'\n';
+	}
 
 	auto interval = 1000ms;
 	auto timeout = 10000000ms;
 	if (auto p = parser.getParam(L"interval", 0))
-		interval = chrono::milliseconds(_wtoi(p->c_str()));
+		interval = std::chrono::milliseconds(_wtoi(p->c_str()));
 	if (auto p = parser.getParam(L"timeout", 0))
-		timeout = chrono::milliseconds(_wtoi(p->c_str()));
+		timeout = std::chrono::milliseconds(_wtoi(p->c_str()));
+	// 防止 --interval 0 变成忙等待
+	interval = interval.count() ? interval : 1ms;
 
-	int result = mainProcess(check, interval, timeout, mode);
-	wcout << format(L"\n执行结束，返回码: {}\n", result);
+	bool allowOverride = parser.hasCommand(L"override");
+	auto scripts = HugoDbg::loadScripts(allowOverride);
+
+	int result = HugoDbg::mainProcess(check, interval, timeout, mode, scripts);
+	std::wcout << std::format(L"\n执行结束，返回码: {}\n", result);
 	return result;
 }
