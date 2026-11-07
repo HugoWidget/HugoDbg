@@ -23,8 +23,8 @@ class CDPClient;
 namespace HugoDbg {
 
 	inline constexpr wchar_t ALIVE_FILE[] = L"HugoDbg.alive";
-	inline constexpr int     ALIVE_TIMEOUT_SECONDS = 40;
-	inline constexpr int     HEARTBEAT_INTERVAL_MS = 20000;
+	inline constexpr int     ALIVE_TIMEOUT_SECONDS = 5;    // 5 秒未更新即视为失效
+	inline constexpr int     HEARTBEAT_INTERVAL_MS = 2000; // 每 2 秒写入一次
 
 	// 设置心跳文件所在目录
 	void setAliveDir(const std::filesystem::path& dir);
